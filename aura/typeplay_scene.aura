@@ -1,0 +1,19 @@
+; aura-typeplay — scene mutate hooks (stub)
+; MiniMax proposes scenes; Soft/host select — never gold hardcoded fixes.
+; Host offline path: rule_based_scene(signals) in host/scenes.py
+; Host minimax path: host/minimax_scene.py propose → scene_from_proposal
+;
+; Intended Soft flow:
+;   1. read observe signals
+;   2. (optional) ask MiniMax via host for N proposals
+;   3. mutate:rebind / select-best among candidates
+;   4. write scene.json for TUI to pick up
+;
+; AURA_BIN=/workspace/aura-grok/build/aura
+(export typeplay-scene-stub)
+
+(define (typeplay-scene-stub)
+  (hash "status" "stub"
+        "select" "soft-or-host"
+        "propose" "minimax-or-rule-based"
+        "forbid" "gold-hardcoded-fixes"))

@@ -1,0 +1,15 @@
+; aura-typeplay — session score surface (stub)
+; Soft will bind these later. Host already tracks score in Python for v0.
+; AURA_BIN=/workspace/aura-grok/build/aura
+;
+; Intended Soft API (documented sockets — not implemented in Soft yet):
+;   typeplay:session-score  → hash accuracy wpm streak best_streak chars_done
+;   typeplay:reset-session  → clear counters
+;
+; Three layers: Soft runtime / this product / no Soft language hacks.
+(export typeplay-session-stub)
+
+(define (typeplay-session-stub)
+  (hash "status" "stub"
+        "product" "aura-typeplay"
+        "note" "host metrics live; Soft bind pending"))

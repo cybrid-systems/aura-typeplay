@@ -1,0 +1,20 @@
+; aura-typeplay — observe signals (stub)
+; Host writes /tmp/aura-typeplay/observe.json (or $TYPEPLAY_SOCKET_DIR).
+; Soft should read that socket (or a future std/io bridge), not invent gold.
+;
+; Signals:
+;   accuracy  float 0..1
+;   wpm       float
+;   streak    int
+;   best_streak int
+;   chars_done  int
+;   wrong     int
+;   rhythm_cv float  (inter-key interval CV; lower = steadier)
+;
+; Soft observe → fitness for scene select-best. No Soft language hacks here.
+(export typeplay-observe-stub)
+
+(define (typeplay-observe-stub)
+  (hash "status" "stub"
+        "socket" "observe.json"
+        "signals" (list "accuracy" "wpm" "streak" "rhythm_cv")))
