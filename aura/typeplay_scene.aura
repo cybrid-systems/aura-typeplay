@@ -1,9 +1,12 @@
-; aura-typeplay — scene evolve (Soft product brain)
-; Typing signals primary; Soft query:* gate modulates energy / calm bias.
-; Host level theme_scene gently preferred when accuracy healthy.
-; MiniMax propose stays host-side (optional); Soft/host select — no gold fixes.
+; aura-typeplay — Soft product brain: multi-propose scene candidates + select-best
+; Driven by typing accuracy / rhythm / streak / theme (Soft observe ≠ Hard).
+; MiniMax copy propose stays host-thin; Soft owns id/hue/energy.
 ; AURA_BIN=/workspace/aura-grok/build/aura
 (export
+  typeplay-scene-meta
+  typeplay-score-candidate
+  typeplay-multi-propose
+  typeplay-select-best
   typeplay-pick-scene
   typeplay-write-scene
   run-typeplay-evolve)
@@ -15,16 +18,22 @@
 (define (typeplay-scene-meta id)
   (cond
     ((equal? id "party")
-     (hash "id" "party" "title" "Streak Party!" "hue" "yellow" "energy" 0.95))
+     (hash "id" "party" "title" "Streak Party!" "hue" "yellow" "energy" 0.95
+           "mood" "celebrate"))
     ((equal? id "focus")
-     (hash "id" "focus" "title" "Focus Cave" "hue" "white" "energy" 0.2))
+     (hash "id" "focus" "title" "Focus Cave" "hue" "white" "energy" 0.2
+           "mood" "calm"))
     ((equal? id "ocean")
-     (hash "id" "ocean" "title" "Calm Ocean" "hue" "blue" "energy" 0.35))
+     (hash "id" "ocean" "title" "Calm Ocean" "hue" "blue" "energy" 0.35
+           "mood" "gentle"))
     ((equal? id "space")
-     (hash "id" "space" "title" "Star Garden" "hue" "magenta" "energy" 0.7))
+     (hash "id" "space" "title" "Star Garden" "hue" "magenta" "energy" 0.7
+           "mood" "wonder"))
     ((equal? id "meadow")
-     (hash "id" "meadow" "title" "Sunny Meadow" "hue" "green" "energy" 0.4))
-    (#t (hash "id" "forest" "title" "Quiet Forest" "hue" "green" "energy" 0.3))))
+     (hash "id" "meadow" "title" "Sunny Meadow" "hue" "green" "energy" 0.4
+           "mood" "bright"))
+    (#t (hash "id" "forest" "title" "Quiet Forest" "hue" "green" "energy" 0.3
+              "mood" "cozy"))))
 
 (define (typeplay-theme-ok theme)
   (cond
@@ -36,18 +45,33 @@
     ((equal? theme "party") #t)
     (#t #f)))
 
-(define (typeplay-pick-id storm streak acc wpm rhythm theme gate)
-  (cond
-    (storm "focus")
-    ((>= streak 20) "party")
-    ((< acc 0.7) "focus")
-    ((and (> rhythm 0.8) (>= acc 0.85)) "ocean")
-    ((and (>= wpm 25) (>= acc 0.9)) "space")
-    ((and (string? theme) (typeplay-theme-ok theme) (>= acc 0.85)) theme)
-    ((and (>= acc 0.95) (>= streak 10)) "meadow")
-    ((equal? gate "amber") "ocean")
-    ((and (string? theme) (typeplay-theme-ok theme)) theme)
-    (#t "forest")))
+; Fitness for one candidate id given live typing signals + Soft gate.
+; Soft observe ≠ Hard — guidance only.
+(define (typeplay-score-candidate id acc wpm streak rhythm theme gate storm)
+  (let* ((base 1.0)
+         (s1 (if (and (equal? id "party") (>= streak 12)) (+ base 3.0) base))
+         (s2 (if (and (equal? id "focus") (or storm (< acc 0.75))) (+ s1 2.5) s1))
+         (s3 (if (and (equal? id "ocean") (> rhythm 0.7)) (+ s2 2.0) s2))
+         (s4 (if (and (equal? id "space") (and (>= wpm 20) (>= acc 0.88))) (+ s3 2.0) s3))
+         (s5 (if (and (equal? id "meadow") (and (>= acc 0.92) (>= streak 6))) (+ s4 1.8) s4))
+         (s6 (if (and (equal? id "forest") (>= acc 0.8)) (+ s5 1.0) s5))
+         (s7 (if (and (string? theme) (equal? id theme) (>= acc 0.8)) (+ s6 2.2) s6))
+         (s8 (if (and (equal? gate "amber") (equal? id "ocean")) (+ s7 0.8) s7))
+         (s9 (if (and (equal? gate "red") (equal? id "focus")) (+ s8 1.5) s8)))
+    s9))
+
+(define (typeplay-multi-propose)
+  (list "focus" "forest" "meadow" "ocean" "space" "party"))
+
+(define (typeplay-select-best ids acc wpm streak rhythm theme gate storm)
+  (let loop ((xs ids) (best-id "forest") (best-score -1.0))
+    (if (null? xs)
+      best-id
+      (let* ((id (car xs))
+             (sc (typeplay-score-candidate id acc wpm streak rhythm theme gate storm)))
+        (if (> sc best-score)
+          (loop (cdr xs) id sc)
+          (loop (cdr xs) best-id best-score))))))
 
 (define (typeplay-pick-scene bundle)
   (let* ((sig (hash-ref bundle "signals" (hash)))
@@ -59,20 +83,35 @@
          (streak (hash-ref sig "streak" 0))
          (rhythm (hash-ref sig "rhythm_cv" 0.0))
          (theme (hash-ref sig "theme_scene" ""))
-         (id (typeplay-pick-id storm streak acc wpm rhythm theme gate))
+         (ids (typeplay-multi-propose))
+         (id (typeplay-select-best ids acc wpm streak rhythm theme gate storm))
          (meta (typeplay-scene-meta id))
          (base-e (hash-ref meta "energy" 0.5))
          (energy (cond
                    ((equal? gate "red") (* base-e 0.5))
                    ((equal? gate "amber") (* base-e 0.8))
-                   (#t base-e))))
-    (hash "id" (hash-ref meta "id")
+                   ((>= streak 15) (if (> base-e 0.9) 1.0 (+ base-e 0.15)))
+                   (#t base-e)))
+         (hue (hash-ref meta "hue"))
+         ; Style knobs Soft selects for cute TUI (host renders thin).
+         (glyph_scale (cond ((>= streak 10) 1.4) ((>= streak 5) 1.2) (#t 1.0)))
+         (burst (cond ((>= streak 15) "party") ((>= streak 8) "sparkle")
+                      ((< acc 0.7) "soft") (#t "gentle")))
+         (style (hash "glyph_scale" glyph_scale
+                      "burst" burst
+                      "mood" (hash-ref meta "mood" "cozy")
+                      "hue" hue)))
+    (hash "id" id
           "title" (hash-ref meta "title")
-          "hue" (hash-ref meta "hue")
+          "hue" hue
           "energy" energy
+          "mood" (hash-ref meta "mood" "cozy")
+          "style" style
           "source" "soft"
           "gate" gate
           "storm_red" storm
+          "n_propose" (length ids)
+          "select" "select-best"
           "reasons" (hash-ref gate-h "reasons" (list))
           "soft_observe_ne_hard" #t
           "accuracy" acc
@@ -93,6 +132,8 @@
          (_ (typeplay-write-scene scene)))
     (display "TYPEPLAY_EVOLVE ok=true id=")
     (display (hash-ref scene "id"))
+    (display " select=select-best n=")
+    (display (hash-ref scene "n_propose"))
     (display " gate=")
     (display (hash-ref scene "gate"))
     (display " soft_observe_ne_hard=true")

@@ -63,3 +63,8 @@ Soft owns `id` / `hue` / `energy` via observe-steer. Host may call MiniMax to
 propose `title` / `blurb` / `art` for the locked scene. Host select-best:
 kid-safe accept, else rule-based library copy. Never gold-override Soft params
 or rewrite accepted LLM strings.
+
+## Auto-evolve (background)
+
+Host `EvolveWorker` thread: Soft `run-typeplay-evolve` (multi-propose + select-best)
+then MiniMax multi-propose copy; TUI polls snapshots. No keybinding to evolve.

@@ -258,3 +258,158 @@ def scene_from_copy_proposal(base: Scene, proposal: dict | None) -> Scene | None
     if not chosen:
         return None
     return apply_copy(base, chosen)
+
+
+def _multi_prompt(scene: Scene, signals: dict, n: int = 3) -> str:
+    return (
+        f"Propose {n} kid-safe typing-game scene COPY variants as JSON only.\n"
+        "Soft already locked scene id/hue/energy — you only invent flavor.\n"
+        'Return: {"candidates":[{title,blurb,art,style,feedback_en,feedback_zh,line_flavor},...]}\n'
+        "style: one of gentle|sparkle|party|soft|wonder\n"
+        "line_flavor: short EN hint for the next typing vibe (≤8 words)\n"
+        "feedback_en / feedback_zh: encouraging micro lines\n"
+        f"Locked id={scene.id} hue={scene.hue} energy={scene.energy} mood={getattr(scene, 'blurb', '')}\n"
+        f"signals={json.dumps({k: signals.get(k) for k in ('accuracy','streak','wpm','rhythm_cv','recent_accuracy','burstiness','theme_scene','level_id')})}\n"
+        "FORBIDDEN: scary, violent, weapons, death, horror, adult topics.\n"
+        "JSON only, no markdown."
+    )
+
+
+def _chat(messages: list[dict], *, timeout: float = 30.0, temperature: float = 0.9) -> dict[str, Any] | None:
+    key = os.environ.get("MINIMAX_API_KEY", "").strip()
+    if not key:
+        return None
+    base = _lock_base_url(os.environ.get("MINIMAX_BASE_URL"))
+    model = os.environ.get("MINIMAX_MODEL", DEFAULT_MODEL)
+    url = f"{base}/chat/completions"
+    body = {"model": model, "messages": messages, "temperature": temperature}
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = json.loads(resp.read().decode("utf-8"))
+        content = raw["choices"][0]["message"]["content"]
+    except Exception:  # noqa: BLE001
+        return None
+    return _extract_json_obj(content or "")
+
+
+def propose_copy_multi(
+    scene: Scene,
+    signals: dict,
+    *,
+    n: int = 3,
+    timeout: float = 35.0,
+) -> list[dict[str, Any]]:
+    """MiniMax multi-propose copy/style/feedback; Soft/host select-best later."""
+    data = _chat(
+        [
+            {
+                "role": "system",
+                "content": "Kids game copywriter. JSON only. Never scary/violent.",
+            },
+            {"role": "user", "content": _multi_prompt(scene, signals, n=n)},
+        ],
+        timeout=timeout,
+        temperature=0.92,
+    )
+    if not data:
+        return []
+    cands = data.get("candidates")
+    if isinstance(cands, list):
+        return [c for c in cands if isinstance(c, dict)]
+    # single object fallback
+    if "title" in data or "art" in data:
+        return [data]
+    return []
+
+
+def select_best_copy(
+    candidates: list[dict[str, Any]],
+    scene: Scene,
+    signals: dict,
+) -> dict[str, Any] | None:
+    """Thin host select-best among MiniMax candidates using Soft signals.
+
+    No gold rewrite of LLM strings — score + kid-safe accept/reject only.
+    Soft owns scene id; preference uses streak/rhythm/accuracy.
+    """
+    streak = int(signals.get("streak", 0) or 0)
+    rhythm = float(signals.get("rhythm_cv", 0) or 0)
+    acc = float(signals.get("accuracy", 1) or 1)
+    prefer_style = "gentle"
+    if streak >= 12:
+        prefer_style = "party"
+    elif streak >= 6:
+        prefer_style = "sparkle"
+    elif rhythm > 0.75 or acc < 0.75:
+        prefer_style = "soft"
+    elif scene.id in ("space",):
+        prefer_style = "wonder"
+
+    best: dict[str, Any] | None = None
+    best_score = -1.0
+    for raw in candidates:
+        chosen = select_copy(raw)
+        if not chosen:
+            continue
+        style = str(raw.get("style") or "gentle")
+        if style and not kid_safe_copy(style):
+            continue
+        fe = str(raw.get("feedback_en") or "")
+        fz = str(raw.get("feedback_zh") or "")
+        lf = str(raw.get("line_flavor") or "")
+        for extra in (fe, fz, lf):
+            if extra and not kid_safe_copy(extra):
+                fe, fz, lf = "", "", lf if kid_safe_copy(lf) else ""
+                break
+        score = 1.0
+        if style == prefer_style:
+            score += 2.0
+        if fe and fz:
+            score += 0.8
+        if lf:
+            score += 0.4
+        if len(chosen["art"].splitlines()) >= 4:
+            score += 0.5
+        if score > best_score:
+            best_score = score
+            best = {
+                **chosen,
+                "style": style or prefer_style,
+                "feedback_en": fe,
+                "feedback_zh": fz,
+                "line_flavor": lf,
+            }
+    return best
+
+
+def continuous_enrich(
+    scene: Scene,
+    signals: dict,
+    *,
+    use_minimax: bool,
+) -> tuple[Scene, dict[str, Any], str]:
+    """Background path: multi-propose → select-best → scene + extras.
+
+    Returns (scene, extras, tag). extras may include style/feedback/line_flavor.
+    """
+    extras: dict[str, Any] = {}
+    if not use_minimax or not has_api_key():
+        return rule_based_copy(scene), extras, "copy/offline"
+    cands = propose_copy_multi(scene, signals)
+    chosen = select_best_copy(cands, scene, signals)
+    if not chosen:
+        return rule_based_copy(scene), extras, "copy/offline(fallback)"
+    extras = {
+        "style": chosen.get("style") or "gentle",
+        "feedback_en": chosen.get("feedback_en") or "",
+        "feedback_zh": chosen.get("feedback_zh") or "",
+        "line_flavor": chosen.get("line_flavor") or "",
+        "n_propose": len(cands),
+    }
+    return apply_copy(scene, chosen), extras, "copy/minimax-select-best"

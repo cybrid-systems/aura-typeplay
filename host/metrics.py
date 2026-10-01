@@ -1,4 +1,4 @@
-"""Live typing metrics: accuracy, WPM, streak, rhythm signals for Soft observe."""
+"""Live typing metrics: accuracy, WPM, streak, rhythm, input patterns for Soft."""
 
 from __future__ import annotations
 
@@ -14,19 +14,21 @@ class SessionScore:
     best_streak: int = 0
     chars_done: int = 0
     started_at: float = field(default_factory=time.monotonic)
-    # Inter-key intervals (ms) for rhythm observe
     intervals_ms: list[float] = field(default_factory=list)
+    recent_ok: list[bool] = field(default_factory=list)  # last 24 keys
     _last_key_at: float | None = None
 
     def record_key(self, ok: bool) -> None:
         now = time.monotonic()
         if self._last_key_at is not None:
             self.intervals_ms.append((now - self._last_key_at) * 1000.0)
-            # keep a rolling window
             if len(self.intervals_ms) > 64:
                 self.intervals_ms = self.intervals_ms[-64:]
         self._last_key_at = now
         self.chars_done += 1
+        self.recent_ok.append(ok)
+        if len(self.recent_ok) > 24:
+            self.recent_ok = self.recent_ok[-24:]
         if ok:
             self.correct += 1
             self.streak += 1
@@ -44,17 +46,14 @@ class SessionScore:
 
     @property
     def elapsed_min(self) -> float:
-        # floor at 3s so brand-new sessions do not show absurd WPM
         secs = max(time.monotonic() - self.started_at, 3.0)
         return secs / 60.0
 
     @property
     def wpm(self) -> float:
-        # standard: 5 chars ≈ 1 word
         return (self.correct / 5.0) / self.elapsed_min
 
     def rhythm_cv(self) -> float:
-        """Coefficient of variation of inter-key intervals (lower = steadier)."""
         xs = self.intervals_ms
         if len(xs) < 3:
             return 0.0
@@ -64,8 +63,22 @@ class SessionScore:
         var = sum((x - mean) ** 2 for x in xs) / len(xs)
         return (var**0.5) / mean
 
+    def recent_accuracy(self) -> float:
+        if not self.recent_ok:
+            return 1.0
+        return sum(1 for x in self.recent_ok if x) / len(self.recent_ok)
+
+    def burstiness(self) -> float:
+        """High when mixed fast+slow intervals (input pattern irregularity)."""
+        xs = self.intervals_ms[-16:]
+        if len(xs) < 4:
+            return 0.0
+        lo, hi = min(xs), max(xs)
+        if hi <= 0:
+            return 0.0
+        return min(1.0, (hi - lo) / hi)
+
     def observe_signals(self) -> dict:
-        """Signals Soft will observe later via documented sockets."""
         return {
             "accuracy": round(self.accuracy, 4),
             "wpm": round(self.wpm, 2),
@@ -74,4 +87,6 @@ class SessionScore:
             "chars_done": self.chars_done,
             "wrong": self.wrong,
             "rhythm_cv": round(self.rhythm_cv(), 4),
+            "recent_accuracy": round(self.recent_accuracy(), 4),
+            "burstiness": round(self.burstiness(), 4),
         }

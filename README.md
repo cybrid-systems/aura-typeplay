@@ -79,13 +79,26 @@ make minimax                        # Soft/host select id → MiniMax copy
 make smoke-minimax-copy             # filter smoke (+ live if key set)
 ```
 
+
+## Auto-evolve (no Ctrl+E)
+
+Typing itself drives Soft + MiniMax in the **background**. See [`docs/auto-evolve.md`](docs/auto-evolve.md).
+
+- Soft: multi-propose scenes → select-best from rhythm / accuracy / streak
+- MiniMax: continuous copy / style / bilingual micro-feedback proposals
+- TUI: big glyphs, emoji reactions, color bursts, morphing scene art
+
+```bash
+make venv && make soft      # Soft auto-evolve (+ MiniMax copy if key set)
+make minimax                # continuous MiniMax multi-propose + Soft select when available
+```
+
 ### Keys
 
 | Key | Action |
 |-----|--------|
 | letters / space / punct | Type against the target line |
 | `Ctrl+N` | Skip line |
-| `Ctrl+E` | Force scene evolve |
 | `Ctrl+C` | Quit |
 
 ## Layout
