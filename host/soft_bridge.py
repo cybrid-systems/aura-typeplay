@@ -67,10 +67,9 @@ def soft_env(*, aura_bin: str | None = None) -> dict[str, str]:
         **os.environ,
         "AURA_BIN": bin_path,
         "AURA_PATH": aura_path(),
-        "AURA_SANDBOX": os.environ.get("AURA_SANDBOX") or "off",
-        "AURA_PIPELINE_STRICT": os.environ.get("AURA_PIPELINE_STRICT") or "0",
         "TYPEPLAY_SOCKET_DIR": str(socket_dir()),
     }
+    # Do not force AURA_SANDBOX / AURA_PIPELINE_STRICT — Soft production defaults.
     return env
 
 

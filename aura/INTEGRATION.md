@@ -6,7 +6,6 @@
 |-----|---------|------|
 | `AURA_BIN` | `/workspace/aura-grok/build/aura` | Soft binary **only** this path |
 | `AURA_PATH` | Soft sets: `/workspace/aura-grok/lib:…/aura-typeplay/aura` | Module search |
-| `AURA_SANDBOX` | `off` | Local Soft ergonomics |
 | `TYPEPLAY_MODE` | `offline` | `offline` \| `soft` \| `minimax` |
 | `TYPEPLAY_SOCKET_DIR` | `/tmp/aura-typeplay` | JSON observe/scene drop |
 | `MINIMAX_API_KEY` | unset | Host MiniMax propose only |

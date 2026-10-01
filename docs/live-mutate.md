@@ -41,7 +41,7 @@ Offline Soft-down: badge idle; host shows library art honestly as
 MiniMax only proposes **copy** (title/blurb/art/cheers). Soft owns mutate.
 
 ```bash
-export AURA_BIN=/workspace/aura-grok/build/aura AURA_SANDBOX=off AURA_PIPELINE_STRICT=0
+export AURA_BIN=/workspace/aura-grok/build/aura
 make soft
 # optional copy:
 export MINIMAX_API_KEY=...

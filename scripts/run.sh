@@ -35,5 +35,4 @@ fi
 
 export TYPEPLAY_MODE="${TYPEPLAY_MODE:-offline}"
 export AURA_BIN="${AURA_BIN:-/workspace/aura-grok/build/aura}"
-export AURA_SANDBOX="${AURA_SANDBOX:-off}"
 exec "$PY" -m host.app "$@"

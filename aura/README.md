@@ -4,7 +4,6 @@ Product brain in Soft. Host is thin TUI + optional MiniMax API.
 
 ```bash
 export AURA_BIN=/workspace/aura-grok/build/aura
-export AURA_SANDBOX=off
 export AURA_PATH=/workspace/aura-grok/lib:/workspace/aura-typeplay/aura
 export TYPEPLAY_SOCKET_DIR=/tmp/aura-typeplay
 # host writes observe.json, then:

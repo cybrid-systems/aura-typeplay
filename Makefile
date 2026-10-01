@@ -7,7 +7,6 @@
 AURA_BIN   ?= /workspace/aura-grok/build/aura
 PYTHON3    ?= python3
 export AURA_BIN
-export AURA_SANDBOX ?= off
 
 # Resolve venv interpreter at recipe time (prefer python3; fall back to python).
 # Do not bake the path at Makefile parse time — `make venv soft` must see a fresh venv.
@@ -44,22 +43,22 @@ offline: ensure-venv
 
 # Soft serve observe-steer (falls back offline if Soft down)
 soft: ensure-venv
-	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $$PY -m host.app
+	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY -m host.app
 
 # Soft/host select scene id; MiniMax proposes title/blurb/art (needs MINIMAX_API_KEY)
 minimax: ensure-venv
 	@test -n "$$MINIMAX_API_KEY" || (echo "MINIMAX_API_KEY unset — will use rule-based copy"; true)
-	@PY=$$($(PY_SH)); TYPEPLAY_MODE=minimax AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $$PY -m host.app
+	@PY=$$($(PY_SH)); TYPEPLAY_MODE=minimax AURA_BIN=$(AURA_BIN) $$PY -m host.app
 
 doctor: ensure-venv
 	@echo "AURA_BIN=$(AURA_BIN)"
 	@test -x "$(AURA_BIN)" && echo "Soft binary: ok" || echo "Soft binary: MISSING"
 	@PY=$$($(PY_SH)); $$PY -c "import textual; print('textual', textual.__version__)"
 	@test -n "$$MINIMAX_API_KEY" && echo "MINIMAX_API_KEY: set" || echo "MINIMAX_API_KEY: unset"
-	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $$PY -c "from host.soft_bridge import doctor; import json; print(json.dumps(doctor(), indent=2))"
+	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY -c "from host.soft_bridge import doctor; import json; print(json.dumps(doctor(), indent=2))"
 
 smoke-soft: ensure-venv
-	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $$PY scripts/smoke_soft.py
+	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY scripts/smoke_soft.py
 
 smoke-minimax-copy: ensure-venv
 	@PY=$$($(PY_SH)); $$PY scripts/smoke_minimax_copy.py

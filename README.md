@@ -36,7 +36,6 @@ Soft binary **only**:
 
 ```bash
 export AURA_BIN=/workspace/aura-grok/build/aura
-export AURA_SANDBOX=off
 ```
 
 MiniMax propose (host thin; Soft/host select) — see below:
@@ -45,7 +44,6 @@ MiniMax propose (host thin; Soft/host select) — see below:
 export MINIMAX_API_KEY=...
 make minimax
 ```
-
 
 ## Levels (bilingual)
 
@@ -61,8 +59,6 @@ Progressive ladder in [`host/levels.py`](host/levels.py) — see [`docs/levels.m
 | Celebrate 连击派对 | party | `you did great` |
 
 Advance: 3 lines at ≥85% line accuracy. Soft scene may hint the next theme forward.
-
-
 
 ## What you see: Soft vs MiniMax
 
@@ -89,7 +85,6 @@ make minimax                        # Soft/host select id → MiniMax copy
 # Soft mode + copy: TYPEPLAY_MINIMAX_COPY=1 make soft
 make smoke-minimax-copy             # filter smoke (+ live if key set)
 ```
-
 
 ## Soft live-mutate (Aura-native)
 
