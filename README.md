@@ -22,12 +22,15 @@ See [`docs/three-layers.md`](docs/three-layers.md) and [`aura/INTEGRATION.md`](a
 
 ```bash
 cd /workspace/aura-typeplay   # or clone
-make venv
+make venv                     # REQUIRED first — uses python3 -m venv (not `python`)
 make offline                  # rule-based scene swap (no Soft)
 make soft                     # Soft serve observe-steer → scene (offline fallback if Soft down)
 make doctor                   # Soft binary + evolve smoke
 make smoke-soft               # non-interactive Soft oneshot + serve smoke
 ```
+
+If `make soft` says `.venv missing`, run `make venv` first. Hosts with only `python3`
+(no `python`) are supported; the Makefile prefers `.venv/bin/python3`.
 
 Soft binary **only**:
 
