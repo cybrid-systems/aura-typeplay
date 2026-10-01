@@ -1,5 +1,6 @@
 ; aura-typeplay — scene evolve (Soft product brain)
 ; Typing signals primary; Soft query:* gate modulates energy / calm bias.
+; Host level theme_scene gently preferred when accuracy healthy.
 ; MiniMax propose stays host-side (optional); Soft/host select — no gold fixes.
 ; AURA_BIN=/workspace/aura-grok/build/aura
 (export
@@ -25,6 +26,29 @@
      (hash "id" "meadow" "title" "Sunny Meadow" "hue" "green" "energy" 0.4))
     (#t (hash "id" "forest" "title" "Quiet Forest" "hue" "green" "energy" 0.3))))
 
+(define (typeplay-theme-ok theme)
+  (cond
+    ((equal? theme "focus") #t)
+    ((equal? theme "forest") #t)
+    ((equal? theme "meadow") #t)
+    ((equal? theme "ocean") #t)
+    ((equal? theme "space") #t)
+    ((equal? theme "party") #t)
+    (#t #f)))
+
+(define (typeplay-pick-id storm streak acc wpm rhythm theme gate)
+  (cond
+    (storm "focus")
+    ((>= streak 20) "party")
+    ((< acc 0.7) "focus")
+    ((and (> rhythm 0.8) (>= acc 0.85)) "ocean")
+    ((and (>= wpm 25) (>= acc 0.9)) "space")
+    ((and (string? theme) (typeplay-theme-ok theme) (>= acc 0.85)) theme)
+    ((and (>= acc 0.95) (>= streak 10)) "meadow")
+    ((equal? gate "amber") "ocean")
+    ((and (string? theme) (typeplay-theme-ok theme)) theme)
+    (#t "forest")))
+
 (define (typeplay-pick-scene bundle)
   (let* ((sig (hash-ref bundle "signals" (hash)))
          (gate-h (hash-ref bundle "gate" (hash)))
@@ -34,16 +58,8 @@
          (wpm (hash-ref sig "wpm" 0.0))
          (streak (hash-ref sig "streak" 0))
          (rhythm (hash-ref sig "rhythm_cv" 0.0))
-         ; Soft storm → calm bias (Soft observe ≠ Hard). Typing still primary.
-         (id (cond
-               (storm "focus")
-               ((>= streak 20) "party")
-               ((< acc 0.7) "focus")
-               ((and (> rhythm 0.8) (>= acc 0.85)) "ocean")
-               ((and (>= wpm 25) (>= acc 0.9)) "space")
-               ((and (>= acc 0.95) (>= streak 10)) "meadow")
-               ((equal? gate "amber") "ocean")
-               (#t "forest")))
+         (theme (hash-ref sig "theme_scene" ""))
+         (id (typeplay-pick-id storm streak acc wpm rhythm theme gate))
          (meta (typeplay-scene-meta id))
          (base-e (hash-ref meta "energy" 0.5))
          (energy (cond
@@ -63,6 +79,7 @@
           "wpm" wpm
           "streak" streak
           "rhythm_cv" rhythm
+          "theme_scene" theme
           "kernel" "aura")))
 
 (define (typeplay-write-scene scene)

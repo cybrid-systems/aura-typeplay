@@ -2,19 +2,19 @@
 
 Soft binary: AURA_BIN=/workspace/aura-grok/build/aura
 Product brain: aura/*.aura — Soft observe ≠ Hard.
+Levels: host/levels.py (bilingual EN + 中文 hints).
 """
 
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Static
 
-from host.lines import next_line
+from host.levels import LevelProgress
 from host.metrics import SessionScore
 from host.minimax_scene import propose_or_none
 from host.scenes import Scene, apply_soft_scene, rule_based_scene, scene_from_proposal
@@ -25,30 +25,44 @@ SOCKET_DIR = soft_bridge.socket_dir()
 
 
 class MetricsPanel(Static):
-    """Live accuracy / WPM / streak."""
+    """Live accuracy / WPM / streak + level."""
 
-    def show(self, score: SessionScore) -> None:
+    def show(self, score: SessionScore, progress: LevelProgress) -> None:
         s = score.observe_signals()
+        st = progress.status()
         self.update(
-            f"[b]Accuracy[/] {s['accuracy']*100:5.1f}%   "
-            f"[b]WPM[/] {s['wpm']:5.1f}   "
-            f"[b]Streak[/] {s['streak']:3d}   "
-            f"[b]Best[/] {s['best_streak']:3d}   "
-            f"[dim]rhythm_cv={s['rhythm_cv']}[/]"
+            f"[b]Lv{st['level_idx']+1}[/] {st['level_title_en']} "
+            f"[dim]({st['level_title_zh']})[/]  "
+            f"ok {st['ok_lines']}/{st['lines_to_advance']}  ·  "
+            f"[b]Acc[/] {s['accuracy']*100:5.1f}%  "
+            f"[b]WPM[/] {s['wpm']:5.1f}  "
+            f"[b]Streak[/] {s['streak']:3d}  "
+            f"[dim]rhythm={s['rhythm_cv']}[/]"
         )
 
 
 class TargetPanel(Static):
-    """Target line with typed / remaining highlighting."""
+    """Target line with typed / remaining + Chinese hint."""
 
-    def show(self, target: str, typed_len: int, last_ok: bool | None) -> None:
+    def show(
+        self,
+        target: str,
+        typed_len: int,
+        last_ok: bool | None,
+        hint_zh: str,
+        progress: LevelProgress,
+    ) -> None:
         done = target[:typed_len]
         rest = target[typed_len:]
         caret = "[blink]▍[/]"
         if last_ok is False and typed_len > 0:
             done = target[: typed_len - 1] + f"[red bold]{target[typed_len - 1]}[/]"
+        zh = f"  [cyan]中文[/] {hint_zh}" if hint_zh else ""
+        lv = progress.level
         self.update(
-            f"[b]Type this:[/]\n\n"
+            f"[b]Level[/] {lv.title_en} / {lv.title_zh}  "
+            f"[dim]theme→{lv.theme_scene}[/]\n"
+            f"[b]Type this:[/]{zh}\n\n"
             f"  [green]{done}[/]{caret}[white]{rest}[/]"
         )
 
@@ -69,7 +83,7 @@ class ScenePanel(Static):
 
 
 class TypeplayApp(App):
-    """Kids typing host — Soft serve observe-steer when mode=soft."""
+    """Kids typing host — levels + Soft serve observe-steer when mode=soft."""
 
     CSS = """
     Screen { layout: vertical; }
@@ -87,20 +101,35 @@ class TypeplayApp(App):
     ]
 
     TITLE = "aura-typeplay"
-    SUB_TITLE = "kids typing · Soft observe · scene evolve"
+    SUB_TITLE = "kids typing · levels · Soft observe · scene evolve"
 
     def __init__(self) -> None:
         super().__init__()
         self.mode = os.environ.get("TYPEPLAY_MODE", "offline").lower()
         self.score = SessionScore()
-        self.line_index = 0
-        self.target = next_line(0)
+        self.progress = LevelProgress()
+        self.target = self.progress.target_text()
         self.typed_len = 0
+        self.line_correct = 0
+        self.line_wrong = 0
         self.last_ok: bool | None = None
-        self.scene: Scene = rule_based_scene(self.score.observe_signals())
+        self.scene: Scene = rule_based_scene(self._signals())
         self.scene_source = "offline"
         self._evolve_every = 8
         self._soft: soft_bridge.SoftServe | None = None
+
+    def _signals(self) -> dict:
+        sig = self.score.observe_signals()
+        st = self.progress.status()
+        sig.update(
+            {
+                "level_id": st["level_id"],
+                "level_idx": st["level_idx"],
+                "theme_scene": st["theme_scene"],
+                "level_title_en": st["level_title_en"],
+            }
+        )
+        return sig
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -121,7 +150,6 @@ class TypeplayApp(App):
         if self.mode == "soft":
             self._soft = soft_bridge.SoftServe.start()
             if not self._soft.alive:
-                # Soft down → keep running offline; hint shows fallback.
                 self.scene_source = f"offline(soft_down:{self._soft.last_error})"
         self._refresh_all()
         self._push_observe()
@@ -132,51 +160,87 @@ class TypeplayApp(App):
             self._soft = None
 
     def _refresh_all(self) -> None:
-        self.query_one("#metrics", MetricsPanel).show(self.score)
+        self.query_one("#metrics", MetricsPanel).show(self.score, self.progress)
         self.query_one("#target", TargetPanel).show(
-            self.target, self.typed_len, self.last_ok
+            self.target,
+            self.typed_len,
+            self.last_ok,
+            self.progress.hint_zh(),
+            self.progress,
         )
         self.query_one("#scene", ScenePanel).show(self.scene, self.scene_source)
 
-    def _advance_line(self) -> None:
-        self.line_index += 1
-        self.target = next_line(self.line_index)
+    def _reset_line_counters(self) -> None:
         self.typed_len = 0
+        self.line_correct = 0
+        self.line_wrong = 0
         self.last_ok = None
+        self.target = self.progress.target_text()
+
+    def _line_accuracy(self) -> float:
+        total = self.line_correct + self.line_wrong
+        if total == 0:
+            return 1.0
+        return self.line_correct / total
+
+    def _finish_line(self) -> None:
+        event = self.progress.complete_line(self._line_accuracy())
+        self._reset_line_counters()
+        if event.get("advanced"):
+            # Level-up: nudge scene toward new theme (offline); Soft may refine.
+            theme = self.progress.level.theme_scene
+            from host.scenes import SCENES
+
+            if theme in SCENES:
+                self.scene = SCENES[theme]
+                self.scene_source = f"level-up:{event['to_level']}"
 
     def _push_observe(self, signals: dict | None = None) -> None:
         try:
-            soft_bridge.write_observe(signals or self.score.observe_signals())
+            soft_bridge.write_observe(signals or self._signals())
         except OSError:
             pass
 
     def _apply_offline(self, signals: dict) -> None:
-        self.scene = rule_based_scene(signals)
+        # Prefer current level theme when accuracy is healthy
+        from host.scenes import SCENES
+
+        theme = self.progress.level.theme_scene
+        acc = float(signals.get("accuracy", 1.0))
+        streak = int(signals.get("streak", 0))
+        if streak >= 20 and "party" in SCENES:
+            self.scene = SCENES["party"]
+        elif acc < 0.7 and "focus" in SCENES:
+            self.scene = SCENES["focus"]
+        elif theme in SCENES:
+            self.scene = SCENES[theme]
+        else:
+            self.scene = rule_based_scene(signals)
         self.scene_source = "offline"
 
     def _maybe_evolve(self, force: bool = False) -> None:
         if not force and self.score.chars_done % self._evolve_every != 0:
             return
-        signals = self.score.observe_signals()
+        signals = self._signals()
         self._push_observe(signals)
 
-        # Soft mode: Soft product brain steers scene.
         if self.mode == "soft":
             got = soft_bridge.evolve_with_soft(signals, serve=self._soft)
             applied = apply_soft_scene(got.get("scene"), signals)
             if got.get("ok") and applied:
-                self.scene, self.scene_source = applied
+                self.scene, _ = applied
                 via = got.get("via") or "soft"
                 self.scene_source = f"soft/{via}"
+                # Soft scene can hint a higher level theme
+                self.progress.hint_from_scene(self.scene.id)
+                self.target = self.progress.target_text()
                 self._refresh_all()
                 return
-            # Soft down / fail → offline fallback
             self._apply_offline(signals)
             self.scene_source = f"offline(soft_fallback:{got.get('via')})"
             self._refresh_all()
             return
 
-        # MiniMax propose (host thin); Soft/host select — no gold fixes.
         if self.mode == "minimax":
             proposal = propose_or_none(signals)
             if proposal:
@@ -184,6 +248,8 @@ class TypeplayApp(App):
                 if scene:
                     self.scene = scene
                     self.scene_source = "minimax"
+                    self.progress.hint_from_scene(scene.id)
+                    self.target = self.progress.target_text()
                     self._refresh_all()
                     return
 
@@ -200,17 +266,20 @@ class TypeplayApp(App):
         ok = ch == expected
         self.score.record_key(ok)
         if ok:
+            self.line_correct += 1
             self.typed_len += 1
             self.last_ok = True
             if self.typed_len >= len(self.target):
-                self._advance_line()
+                self._finish_line()
         else:
+            self.line_wrong += 1
             self.last_ok = False
         self._refresh_all()
         self._maybe_evolve()
 
     def action_skip(self) -> None:
-        self._advance_line()
+        self.progress.skip_line()
+        self._reset_line_counters()
         self._refresh_all()
 
     def action_evolve(self) -> None:

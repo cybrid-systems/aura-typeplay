@@ -43,6 +43,22 @@ export MINIMAX_API_KEY=...
 make minimax
 ```
 
+
+## Levels (bilingual)
+
+Progressive ladder in [`host/levels.py`](host/levels.py) — see [`docs/levels.md`](docs/levels.md).
+
+| Level | Soft scene | Try |
+|-------|------------|-----|
+| Home Row 基准键 | focus | `asdf jkl;` |
+| Animals 可爱动物 | forest | `cat` / `mao is cat` |
+| Meadow 阳光草地 | meadow | `yellow sun` |
+| Ocean 平静大海 | ocean | `dolphin swims` |
+| Space 星星花园 | space | `xing xing` |
+| Celebrate 连击派对 | party | `you did great` |
+
+Advance: 3 lines at ≥85% line accuracy. Soft scene may hint the next theme forward.
+
 ### Keys
 
 | Key | Action |
@@ -61,7 +77,8 @@ host/               Python Textual TUI (thin host)
   metrics.py        accuracy / WPM / streak / rhythm_cv
   scenes.py         ANSI scenes + offline + apply Soft scene
   minimax_scene.py  MiniMax propose (env key); Soft/host select
-  lines.py          kid-friendly target lines
+  levels.py         progressive bilingual levels + hints
+  lines.py          back-compat re-export
 aura/               Soft product brain (.aura) + integration notes
   typeplay_*.aura   session / observe / scene evolve (Soft)
   INTEGRATION.md    sockets Soft will serve later

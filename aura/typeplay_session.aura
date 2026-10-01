@@ -1,5 +1,5 @@
 ; aura-typeplay — session score surface (Soft product)
-; Host writes typing signals to observe.json; Soft reads (no Soft lang hacks).
+; Host writes typing signals + level theme to observe.json; Soft reads.
 ; AURA_BIN=/workspace/aura-grok/build/aura
 ; Soft observe ≠ Hard.
 (export
@@ -25,6 +25,10 @@
   (let ((v (hash-ref h key default)))
     (if (number? v) v default)))
 
+(define (typeplay-str h key default)
+  (let ((v (hash-ref h key default)))
+    (if (string? v) v default)))
+
 (define (typeplay-read-signals)
   (let ((p (typeplay-observe-path)))
     (if (file-exists? p)
@@ -41,6 +45,10 @@
           "chars_done" (typeplay-num h "chars_done" 0)
           "wrong" (typeplay-num h "wrong" 0)
           "rhythm_cv" (typeplay-num h "rhythm_cv" 0.0)
+          "level_id" (typeplay-str h "level_id" "home")
+          "level_idx" (typeplay-num h "level_idx" 0)
+          "theme_scene" (typeplay-str h "theme_scene" "")
+          "level_title_en" (typeplay-str h "level_title_en" "")
           "soft_observe_ne_hard" #t
           "kernel" "aura"
           "product" "aura-typeplay")))
