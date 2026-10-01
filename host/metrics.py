@@ -37,6 +37,17 @@ class SessionScore:
             self.wrong += 1
             self.streak = 0
 
+    def undo_correct(self) -> None:
+        """Backspace: gently undo one prior correct key (streak trimmed)."""
+        if self.correct > 0:
+            self.correct -= 1
+        if self.chars_done > 0:
+            self.chars_done -= 1
+        if self.streak > 0:
+            self.streak -= 1
+        if self.recent_ok and self.recent_ok[-1] is True:
+            self.recent_ok.pop()
+
     @property
     def accuracy(self) -> float:
         total = self.correct + self.wrong

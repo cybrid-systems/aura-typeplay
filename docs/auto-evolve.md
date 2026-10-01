@@ -31,3 +31,21 @@ Play never blocks on the network.
 
 Env: `TYPEPLAY_EVOLVE_INTERVAL` (seconds, default 5), `TYPEPLAY_MINIMAX_COPY=0` to
 disable MiniMax during `make soft`.
+
+## MiniMax 生成什么？Soft 选什么？
+
+| 角色 | 做什么 | 你在屏幕哪里看到 |
+|------|--------|------------------|
+| **Soft** | 根据准确率 / 节奏 / 连击 **多候选选优** 场景 `id`、颜色 `hue`、能量 `energy`、风格旋钮 | 右侧场景徽章「🌿 Soft 场景」；顶栏 `📡 进化来源` |
+| **MiniMax** | 为 Soft 锁定的场景 **写文案**：标题、简介、ASCII/emoji 画、中英鼓励话、下一句味道 | 「🌟 小星星说」条；场景徽章「🎨 AI 画画」；标题/简介/画会换 |
+| **本机（无）** | 每个按键的表情反馈、打错时的黄色大字提示 | 粉框表情区；打字区闪烁 `>>> X <<<` |
+
+没有 `MINIMAX_API_KEY` 时：小星星条会提示等待钥匙，场景用内置图库文案（offline）。
+
+## Typing feel
+
+- **打对**：前进一格，绿色字。
+- **打错**：不前进；黄色/`>>> 字母 <<<` 大提示「请按这个」；再乱按只刷新可爱 oops（限频），**直到按对**才继续。
+- **Backspace**：退一格（撤销一个已对的字）。
+- 空格 / Enter 只有目标里真有才需要。
+

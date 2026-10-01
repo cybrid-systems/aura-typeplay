@@ -63,6 +63,17 @@ Progressive ladder in [`host/levels.py`](host/levels.py) — see [`docs/levels.m
 Advance: 3 lines at ≥85% line accuracy. Soft scene may hint the next theme forward.
 
 
+
+## What you see: Soft vs MiniMax
+
+- **Soft selects** scene id / hue / energy (multi-propose → select-best from typing signals).
+- **MiniMax generates** kid-safe title, blurb, ASCII art, and bilingual cheers — shown in
+  the **「🌟 小星星说」** strip and as **「🎨 AI 画画」** on the scene panel when copy is live.
+- Top status shows last evolve source (`soft/…+copy/minimax-select-best` or offline).
+
+Typing: wrong keys **do not advance**; the expected letter flashes huge until you hit it.
+**Backspace** undoes one correct char. Details: [`docs/auto-evolve.md`](docs/auto-evolve.md).
+
 ## MiniMax scene copy
 
 Soft (or offline rules) **select** scene `id` / `hue` / `energy`. MiniMax only
