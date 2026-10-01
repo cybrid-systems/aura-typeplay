@@ -169,8 +169,10 @@ def minimax_status_chip(
         return "[bold black on #ffdd66] MiniMax probing… [/]"
     if st == "fail":
         e = (err or "").strip()
-        if "401" in e or "403" in e or "密钥无效" in e:
-            short = "密钥无效或未加载"
+        if "密钥文件不存在" in e:
+            short = "密钥文件不存在"
+        elif "401" in e or "403" in e or "密钥无效" in e:
+            short = "密钥无效"
         else:
             short = (e or "error")[:36]
         return f"[bold white on #cc3344] MiniMax FAIL ({short}) [/]"
@@ -210,8 +212,10 @@ class StarSpeakPanel(Static):
             return
         if st == "fail":
             e = (mm_error or "").strip()
-            if "401" in e or "403" in e or "密钥无效" in e:
-                detail = "密钥无效或未加载 — 检查 KEY / aura-build minimax.env"
+            if "密钥文件不存在" in e:
+                detail = "密钥文件不存在 — 检查 minimax.env 里 MINIMAX_API_KEY_FILE 路径"
+            elif "401" in e or "403" in e or "密钥无效" in e:
+                detail = "密钥无效 — 检查 KEY_FILE 内容或重新登录 MiniMax"
             else:
                 detail = e or "unknown"
             self.update(

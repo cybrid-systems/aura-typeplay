@@ -36,7 +36,7 @@ Offline Soft-down: badge idle; host shows library art honestly as
 | `MiniMax 未接 KEY` | No key via env / KEY_FILE / aura-build `minimax.env` — Soft still mutates |
 | `MiniMax probing…` | API call in flight |
 | `MiniMax OK Nms #hash` | Propose succeeded; 「小星星说」refreshed |
-| `MiniMax FAIL (…)` | API/filter fail — Soft AST still live; `401` → `密钥无效或未加载` |
+| `MiniMax FAIL (…)` | API/filter fail — Soft AST still live; missing KEY_FILE → `密钥文件不存在`; `401` → `密钥无效` |
 
 MiniMax only proposes **copy** (title/blurb/art/cheers). Soft owns mutate.
 

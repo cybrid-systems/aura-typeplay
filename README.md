@@ -41,13 +41,14 @@ export AURA_BIN=/workspace/aura-grok/build/aura
 MiniMax propose (host thin; Soft/host select) — see below:
 
 ```bash
-# either export the key:
-export MINIMAX_API_KEY=...
-# or share aura-build's env (recommended on this box):
-#   ~/.config/aura-build/minimax.env  (+ MINIMAX_API_KEY_FILE)
-# optional typeplay override:
-#   ~/.config/aura-typeplay/minimax.env
-make minimax
+# No export needed if aura-build env exists (KEY_FILE only is enough):
+#   ~/.config/aura-build/minimax.env
+#     MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+#     MINIMAX_MODEL=MiniMax-M3
+#     MINIMAX_API_KEY_FILE=/path/to/key
+# Or: export MINIMAX_API_KEY=...
+make soft          # Soft + MiniMax copy when key resolves
+# make minimax
 ```
 
 ## Levels (bilingual)
@@ -83,10 +84,14 @@ select-best accepts or rejects (content filter); no gold rewrite of LLM copy.
 No key / reject → library rule-based copy.
 
 ```bash
-# Key resolution (same spirit as aura-build; never print the secret):
+# Key resolution (same as aura-build; never print the secret):
 #   1) export MINIMAX_API_KEY=...
-#   2) export MINIMAX_API_KEY_FILE=~/.config/aura-build/minimax_api_key
-#   3) share ~/.config/aura-build/minimax.env  (or ~/.config/aura-typeplay/minimax.env)
+#   2) export MINIMAX_API_KEY_FILE=/path/to/key
+#   3) share ~/.config/aura-build/minimax.env — typically ONLY:
+#        MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+#        MINIMAX_MODEL=MiniMax-M3
+#        MINIMAX_API_KEY_FILE=/path/to/key   # typeplay reads this file
+#      (no need to export KEY if that env file exists)
 # optional: MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 # optional: MINIMAX_MODEL=MiniMax-M3
 make minimax                        # Soft/host select id → MiniMax copy

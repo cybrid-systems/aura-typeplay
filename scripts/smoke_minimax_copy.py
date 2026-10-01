@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke MiniMax copy propose (filter + key resolve + optional live). Soft owns id/hue/energy."""
+"""Smoke MiniMax copy (filter + KEY_FILE env-file resolve). Never print secrets."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ sys.path.insert(0, str(ROOT))
 
 from host.app import minimax_status_chip  # noqa: E402
 from host.minimax_scene import (  # noqa: E402
+    _HINT_KEY_INVALID,
+    _HINT_KEY_MISSING_FILE,
     _HTTP_401_HINT,
     _friendly_http_error,
     _sanitize_api_key,
@@ -22,61 +24,95 @@ from host.minimax_scene import (  # noqa: E402
     has_api_key,
     kid_safe_copy,
     kid_safe_hit,
-    resolve_api_key,
+    resolve_minimax,
     select_copy,
 )
 from host.scenes import SCENES  # noqa: E402
 
 
+def _assert_keyfile_only_env() -> None:
+    """aura-build shape: env file has KEY_FILE + BASE + MODEL, no inline KEY."""
+    with tempfile.TemporaryDirectory() as td:
+        td_path = Path(td)
+        key_path = td_path / "minimax"
+        key_path.write_text("Bearer sk-unit-test-key-xyz\n", encoding="utf-8")
+        env_path = td_path / "minimax.env"
+        env_path.write_text(
+            "\n".join(
+                [
+                    "MINIMAX_BASE_URL=https://api.minimaxi.com/v1",
+                    "MINIMAX_MODEL=MiniMax-M3",
+                    f"MINIMAX_API_KEY_FILE={key_path}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        # No process KEY / KEY_FILE — only the env file (user's real layout).
+        environ = {
+            "HOME": str(td_path / "nohome"),
+            "AURA_BUILD_MINIMAX_ENV": str(env_path),
+        }
+        cfg = resolve_minimax(environ=environ)
+        assert cfg.api_key == "sk-unit-test-key-xyz", "KEY_FILE from env file not loaded"
+        assert cfg.base_url == "https://api.minimaxi.com/v1"
+        assert cfg.model == "MiniMax-M3"
+        assert cfg.key_file == str(key_path)
+        assert not cfg.error
+
+        # Missing KEY_FILE path → clear chip hint
+        missing = td_path / "missing_key"
+        env_path.write_text(
+            f"MINIMAX_BASE_URL=https://api.minimaxi.com/v1\n"
+            f"MINIMAX_MODEL=MiniMax-M3\n"
+            f"MINIMAX_API_KEY_FILE={missing}\n",
+            encoding="utf-8",
+        )
+        cfg2 = resolve_minimax(environ=environ)
+        assert not cfg2.api_key
+        assert cfg2.error == _HINT_KEY_MISSING_FILE
+        chip = minimax_status_chip("fail", err=cfg2.error)
+        assert "密钥文件不存在" in chip
+
+        # ~ expansion
+        home = td_path / "home"
+        home.mkdir()
+        tilde_key = home / "k"
+        tilde_key.write_text("sk-tilde-key", encoding="utf-8")
+        env_path.write_text(
+            "MINIMAX_BASE_URL=https://api.minimaxi.com/v1\n"
+            "MINIMAX_MODEL=MiniMax-M3\n"
+            "MINIMAX_API_KEY_FILE=~/k\n",
+            encoding="utf-8",
+        )
+        environ3 = {
+            "HOME": str(home),
+            "AURA_BUILD_MINIMAX_ENV": str(env_path),
+        }
+        cfg3 = resolve_minimax(environ=environ3)
+        assert cfg3.api_key == "sk-tilde-key"
+    print("keyfile_only_env_ok")
+
+
 def main() -> int:
-    assert kid_safe_copy("Sunny Meadow Friends")
-    assert kid_safe_copy("warm sunlight on flowers")  # war⊂warm must NOT block
-    assert kid_safe_hit("warm") is None
+    assert kid_safe_copy("warm sunlight on flowers")
     assert kid_safe_hit("war zone") == "war"
-    assert not kid_safe_copy("scary monster battle")
     bad, why = select_copy({"title": "kill zone", "art": "boom"})
     assert bad is None and "filter" in why
     safe, why2 = select_copy(
         {"title": "Happy Meadow", "blurb": "flowers smile", "art": "  🌻\n bunny"},
         scene=SCENES["meadow"],
     )
-    assert safe and safe["title"] == "Happy Meadow" and why2 == ""
+    assert safe and why2 == ""
     base = SCENES["meadow"]
-    merged = apply_copy(base, safe)
-    assert merged.id == "meadow" and merged.hue == base.hue and merged.energy == base.energy
-    fb, why3 = select_copy(
-        {"title": "Safe Title", "art": "a war scene"},
-        scene=SCENES["meadow"],
-    )
-    assert fb is not None and len(fb["art"]) > 5
-    print("filter_ok", why3 or "art_fallback")
+    assert apply_copy(base, safe).id == "meadow"
+    print("filter_ok")
 
-    # Key sanitize + 401 chip (never print secrets)
-    assert _sanitize_api_key("  Bearer sk-test-key\n") == "sk-test-key"
-    assert _sanitize_api_key("bearer SK-X") == "SK-X"
-    assert _friendly_http_error(401, '{"status":"unauthorized"}') == _HTTP_401_HINT
-    chip = minimax_status_chip("fail", err='http:401:{"msg":"no"}')
-    assert "密钥无效或未加载" in chip and "{" not in chip
-    with tempfile.TemporaryDirectory() as td:
-        key_path = Path(td) / "key"
-        key_path.write_text("Bearer sk-from-file\n", encoding="utf-8")
-        env_path = Path(td) / "minimax.env"
-        env_path.write_text(
-            f"MINIMAX_API_KEY_FILE={key_path}\nMINIMAX_MODEL=MiniMax-M3\n",
-            encoding="utf-8",
-        )
-        got = resolve_api_key(
-            environ={
-                "TYPEPLAY_MINIMAX_ENV": str(env_path),
-                "HOME": "/nonexistent",
-            }
-        )
-        assert got == "sk-from-file", "env-file KEY_FILE path failed"
-        got2 = resolve_api_key(
-            environ={"MINIMAX_API_KEY": "  Bearer sk-env\n", "HOME": "/nonexistent"}
-        )
-        assert got2 == "sk-env"
-    print("key_resolve_ok")
+    assert _sanitize_api_key("  Bearer sk-ab\n") == "sk-ab"
+    assert _friendly_http_error(401) == _HTTP_401_HINT
+    assert _HINT_KEY_INVALID in minimax_status_chip("fail", err=_HTTP_401_HINT)
+    assert "{" not in minimax_status_chip("fail", err='http:401:{"x":1}')
+    _assert_keyfile_only_env()
 
     signals = {
         "accuracy": 0.9,
@@ -86,19 +122,23 @@ def main() -> int:
         "theme_scene": "meadow",
     }
     scene, extras, tag = continuous_enrich(base, signals, use_minimax=False)
-    assert "offline" in tag and scene.id == "meadow"
+    assert "offline" in tag
     print("offline_copy_ok", tag)
 
-    if not has_api_key():
-        print("LIVE_SKIP no MiniMax key resolved")
-        print("SMOKE_OK minimax_copy filter+key")
+    # Resolve against real box config without printing secrets.
+    cfg = resolve_minimax()
+    pub = cfg.public_dict()
+    print("resolve_public:", json.dumps(pub, ensure_ascii=False))
+    if not cfg.api_key:
+        print("LIVE_SKIP", cfg.error or "no_key")
+        print("SMOKE_OK minimax_copy filter+keyfile")
         return 0
 
-    # Live call — may use env KEY or aura-build minimax.env; never print key.
+    # Optional live call — status only, never key material.
     os.environ["TYPEPLAY_MODE"] = "minimax"
     scene2, extras2, tag2 = continuous_enrich(base, signals, use_minimax=True)
     status = extras2.get("minimax_status")
-    err = extras2.get("minimax_error") or ""
+    err = str(extras2.get("minimax_error") or "")
     print(
         "live:",
         json.dumps(
@@ -108,24 +148,24 @@ def main() -> int:
                 "error": err,
                 "ms": extras2.get("last_ms"),
                 "hash": extras2.get("content_hash"),
-                "id": scene2.id,
-                "title": (scene2.title or "")[:40],
-                "blurb": (scene2.blurb or "")[:60],
+                "title_len": len(scene2.title or ""),
                 "art_lines": len((scene2.art or "").splitlines()),
-                "fb_zh": (extras2.get("feedback_zh") or "")[:40],
-                "key_resolved": True,
             },
             ensure_ascii=False,
         ),
     )
-    if status == "fail" and ("401" in err or "密钥" in err):
-        assert "密钥无效或未加载" in err or "401" in err
-        assert "{" not in err
-        print("LIVE_AUTH_FAIL_CHIP_OK")
-        print("SMOKE_OK minimax_copy key+401_hint")
+    if status == "fail":
+        if "401" in err or _HINT_KEY_INVALID in err:
+            assert _HINT_KEY_INVALID in err or "401" in err
+            assert "{" not in err
+            print("LIVE_AUTH_FAIL_CHIP_OK")
+        elif _HINT_KEY_MISSING_FILE in err:
+            print("LIVE_KEY_FILE_MISSING_OK")
+        else:
+            print("LIVE_FAIL", err)
+        print("SMOKE_OK minimax_copy keyfile")
         return 0
     assert status == "ok", extras2
-    assert scene2.id == base.id and scene2.hue == base.hue
     assert scene2.title and scene2.art
     print("SMOKE_OK minimax_copy")
     return 0

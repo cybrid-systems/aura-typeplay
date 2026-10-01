@@ -5,17 +5,18 @@ MiniMax only proposes kid-safe title / blurb / ASCII art flavor for the
 host never gold-hardcodes overrides of accepted LLM copy (unsafe fields
 dropped; Soft/library art may fill if LLM art alone is filtered).
 
-Key resolution (never logged):
-  1. MINIMAX_API_KEY env
-  2. MINIMAX_API_KEY_FILE env (file contents)
-  3. env file: TYPEPLAY_MINIMAX_ENV / MINIMAX_ENV_FILE /
-     ~/.config/aura-typeplay/minimax.env /
-     AURA_BUILD_MINIMAX_ENV / ~/.config/aura-build/minimax.env
-     → MINIMAX_API_KEY or MINIMAX_API_KEY_FILE from that file
-  4. ~/.config/aura-build/minimax_api_key
+Key resolution (mirrors aura-build ``load_minimax_config``; never logged):
+  1. process env MINIMAX_API_KEY
+  2. process env MINIMAX_API_KEY_FILE → read file contents
+  3. parse env files (TYPEPLAY_MINIMAX_ENV / MINIMAX_ENV_FILE /
+     repo ``minimax.env`` / ~/.config/aura-typeplay/minimax.env /
+     AURA_BUILD_MINIMAX_ENV / ~/.config/aura-build/minimax.env)
+     for MINIMAX_API_KEY, MINIMAX_API_KEY_FILE, BASE_URL, MODEL
+  4. if KEY_FILE set in that file (typical aura-build shape — no KEY inline),
+     read that path (expand ``~``)
+  5. fallback ~/.config/aura-build/minimax_api_key
 
-Also: MINIMAX_BASE_URL (default https://api.minimaxi.com/v1),
-      MINIMAX_MODEL (default MiniMax-M3).
+BASE_URL / MODEL: process env, else same env file, else CN defaults.
 """
 
 from __future__ import annotations
@@ -27,6 +28,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -37,6 +39,7 @@ DEFAULT_MODEL = "MiniMax-M3"
 DEFAULT_AURA_BUILD_ENV = Path.home() / ".config" / "aura-build" / "minimax.env"
 DEFAULT_AURA_BUILD_KEY = Path.home() / ".config" / "aura-build" / "minimax_api_key"
 DEFAULT_TYPEPLAY_ENV = Path.home() / ".config" / "aura-typeplay" / "minimax.env"
+REPO_MINIMAX_ENV = Path(__file__).resolve().parents[1] / "minimax.env"
 
 # Word-boundary blocks — avoid false positives (war⊂warm, sex⊂next, die⊂dier…).
 _BLOCK_RE = re.compile(
@@ -48,7 +51,9 @@ _BLOCK_RE = re.compile(
     r")(?![a-z])"
 )
 
-_HTTP_401_HINT = "http:401:密钥无效或未加载"
+_HINT_KEY_MISSING_FILE = "密钥文件不存在"
+_HINT_KEY_INVALID = "密钥无效"
+_HTTP_401_HINT = f"http:401:{_HINT_KEY_INVALID}"
 
 
 def _sanitize_api_key(raw: str | None) -> str:
@@ -58,8 +63,10 @@ def _sanitize_api_key(raw: str | None) -> str:
     key = str(raw).strip().strip("\ufeff")
     if key.lower().startswith("bearer "):
         key = key[7:].strip()
-    # collapse embedded newlines from key files
-    key = "".join(key.split())
+    # key files often end with a trailing newline only — already stripped;
+    # if embedded newlines remain, drop them (never log the value).
+    if "\n" in key or "\r" in key:
+        key = "".join(part.strip() for part in key.splitlines() if part.strip())
     return key
 
 
@@ -80,7 +87,7 @@ def _parse_env_file(path: Path) -> dict[str, str]:
 
 
 def _candidate_env_files(environ: dict[str, str]) -> list[Path]:
-    """Ordered env-file candidates (typeplay first, then aura-build)."""
+    """Ordered env-file candidates (explicit → repo → typeplay → aura-build)."""
     paths: list[Path] = []
     for key in (
         "TYPEPLAY_MINIMAX_ENV",
@@ -90,13 +97,13 @@ def _candidate_env_files(environ: dict[str, str]) -> list[Path]:
         raw = (environ.get(key) or "").strip()
         if raw:
             paths.append(Path(raw).expanduser())
+    paths.append(REPO_MINIMAX_ENV)
     paths.append(DEFAULT_TYPEPLAY_ENV)
     paths.append(DEFAULT_AURA_BUILD_ENV)
-    # de-dupe preserving order
     seen: set[str] = set()
     uniq: list[Path] = []
     for p in paths:
-        s = str(p)
+        s = str(p.resolve()) if p.exists() else str(p)
         if s in seen:
             continue
         seen.add(s)
@@ -104,60 +111,73 @@ def _candidate_env_files(environ: dict[str, str]) -> list[Path]:
     return uniq
 
 
-def _read_key_file(path: Path) -> str:
+def _expand_key_path(raw: str | None, *, home: str | None = None) -> Path | None:
+    """Expand ``~`` using *home* (or process HOME). Absolute paths unchanged."""
+    if not raw or not str(raw).strip():
+        return None
+    s = str(raw).strip()
+    if s.startswith("~"):
+        homedir = home or os.environ.get("HOME") or str(Path.home())
+        if s == "~":
+            s = homedir
+        elif s.startswith("~/"):
+            s = str(Path(homedir) / s[2:])
+        else:
+            # ~otheruser — fall back to Path.expanduser
+            s = str(Path(s).expanduser())
+    return Path(s)
+
+
+@dataclass(frozen=True)
+class MiniMaxResolved:
+    """Resolved MiniMax settings (api_key never logged)."""
+
+    api_key: str
+    base_url: str
+    model: str
+    key_file: str
+    env_file: str
+    error: str = ""  # chip hint when unresolved / missing file
+
+    def public_dict(self) -> dict[str, str]:
+        return {
+            "base_url": self.base_url,
+            "model": self.model,
+            "key_file": self.key_file or "",
+            "env_file": self.env_file or "",
+            "api_key": "<redacted>" if self.api_key else "",
+            "error": self.error,
+            "has_key": "1" if self.api_key else "0",
+        }
+
+
+def _read_key_file(path: Path) -> tuple[str, str]:
+    """Return (sanitized_key, error_hint). error set if path missing/empty."""
     try:
         if not path.is_file():
-            return ""
-        return _sanitize_api_key(path.read_text(encoding="utf-8"))
+            return "", _HINT_KEY_MISSING_FILE
+        key = _sanitize_api_key(path.read_text(encoding="utf-8"))
+        if not key:
+            return "", _HINT_KEY_MISSING_FILE
+        return key, ""
     except OSError:
-        return ""
+        return "", _HINT_KEY_MISSING_FILE
 
 
-def resolve_api_key(*, environ: dict[str, str] | None = None) -> str:
-    """Resolve MiniMax API key without printing it.
-
-    Order: env MINIMAX_API_KEY → MINIMAX_API_KEY_FILE → env files → default key file.
-    """
+def resolve_minimax(*, environ: dict[str, str] | None = None) -> MiniMaxResolved:
+    """Resolve key + base + model like aura-build (KEY_FILE from env file)."""
     env = environ if environ is not None else os.environ
-    direct = _sanitize_api_key(env.get("MINIMAX_API_KEY"))
-    if direct:
-        return direct
 
-    file_hint = (env.get("MINIMAX_API_KEY_FILE") or "").strip()
-    if file_hint:
-        key = _read_key_file(Path(file_hint).expanduser())
-        if key:
-            return key
-
+    # Merge env files (first write wins) — typically only aura-build has values.
     merged: dict[str, str] = {}
+    used_env_file = ""
     for ef in _candidate_env_files(env):
         vals = _parse_env_file(ef)
+        if vals and not used_env_file:
+            used_env_file = str(ef)
         for k, v in vals.items():
             merged.setdefault(k, v)
 
-    file_key = _sanitize_api_key(merged.get("MINIMAX_API_KEY"))
-    if file_key:
-        return file_key
-
-    for hint in (
-        merged.get("MINIMAX_API_KEY_FILE"),
-        str(DEFAULT_AURA_BUILD_KEY),
-    ):
-        if not hint:
-            continue
-        key = _read_key_file(Path(hint).expanduser())
-        if key:
-            return key
-    return ""
-
-
-def resolve_base_and_model(*, environ: dict[str, str] | None = None) -> tuple[str, str]:
-    """BASE_URL + MODEL from process env, then shared env files."""
-    env = environ if environ is not None else os.environ
-    merged: dict[str, str] = {}
-    for ef in _candidate_env_files(env):
-        for k, v in _parse_env_file(ef).items():
-            merged.setdefault(k, v)
     base = _lock_base_url(
         env.get("MINIMAX_BASE_URL") or merged.get("MINIMAX_BASE_URL")
     )
@@ -165,14 +185,112 @@ def resolve_base_and_model(*, environ: dict[str, str] | None = None) -> tuple[st
         (env.get("MINIMAX_MODEL") or merged.get("MINIMAX_MODEL") or DEFAULT_MODEL).strip()
         or DEFAULT_MODEL
     )
-    return base, model
+
+    # 1) process env KEY
+    direct = _sanitize_api_key(env.get("MINIMAX_API_KEY"))
+    if direct:
+        return MiniMaxResolved(
+            api_key=direct,
+            base_url=base,
+            model=model,
+            key_file="",
+            env_file=used_env_file,
+        )
+
+    # 2) process env KEY_FILE
+    proc_kf = _expand_key_path(env.get("MINIMAX_API_KEY_FILE"), home=env.get("HOME"))
+    if proc_kf is not None:
+        key, err = _read_key_file(proc_kf)
+        if key:
+            return MiniMaxResolved(
+                api_key=key,
+                base_url=base,
+                model=model,
+                key_file=str(proc_kf),
+                env_file=used_env_file,
+            )
+        # fall through — try env-file KEY_FILE (aura-build shape) before failing
+
+    # 3) KEY inline in env file (rare)
+    file_key = _sanitize_api_key(merged.get("MINIMAX_API_KEY"))
+    if file_key:
+        return MiniMaxResolved(
+            api_key=file_key,
+            base_url=base,
+            model=model,
+            key_file="",
+            env_file=used_env_file,
+        )
+
+    # 4) KEY_FILE from env file (common aura-build: only KEY_FILE + BASE + MODEL)
+    file_kf = _expand_key_path(merged.get("MINIMAX_API_KEY_FILE"), home=env.get("HOME"))
+    if file_kf is not None:
+        key, err = _read_key_file(file_kf)
+        if key:
+            return MiniMaxResolved(
+                api_key=key,
+                base_url=base,
+                model=model,
+                key_file=str(file_kf),
+                env_file=used_env_file,
+            )
+        return MiniMaxResolved(
+            api_key="",
+            base_url=base,
+            model=model,
+            key_file=str(file_kf),
+            env_file=used_env_file,
+            error=err or _HINT_KEY_MISSING_FILE,
+        )
+
+    # 5) default aura-build key file
+    key, err = _read_key_file(DEFAULT_AURA_BUILD_KEY)
+    if key:
+        return MiniMaxResolved(
+            api_key=key,
+            base_url=base,
+            model=model,
+            key_file=str(DEFAULT_AURA_BUILD_KEY),
+            env_file=used_env_file,
+        )
+
+    # If process KEY_FILE was set but missing, surface that
+    if proc_kf is not None:
+        return MiniMaxResolved(
+            api_key="",
+            base_url=base,
+            model=model,
+            key_file=str(proc_kf),
+            env_file=used_env_file,
+            error=_HINT_KEY_MISSING_FILE,
+        )
+
+    return MiniMaxResolved(
+        api_key="",
+        base_url=base,
+        model=model,
+        key_file="",
+        env_file=used_env_file,
+        error="no_key",
+    )
+
+
+def resolve_api_key(*, environ: dict[str, str] | None = None) -> str:
+    """Return sanitized API key only (empty if unresolved)."""
+    return resolve_minimax(environ=environ).api_key
+
+
+def resolve_base_and_model(*, environ: dict[str, str] | None = None) -> tuple[str, str]:
+    cfg = resolve_minimax(environ=environ)
+    return cfg.base_url, cfg.model
 
 
 def has_api_key() -> bool:
-    return bool(resolve_api_key())
+    return bool(resolve_minimax().api_key)
 
 
 def _lock_base_url(url: str | None) -> str:
+    """Force MiniMax CN endpoint; rewrite .io → minimaxi.com/v1 (aura-build)."""
     raw = (url or "").strip().rstrip("/")
     if not raw:
         return DEFAULT_BASE
@@ -180,7 +298,10 @@ def _lock_base_url(url: str | None) -> str:
     if "minimax.io" in lower:
         return DEFAULT_BASE
     if "minimaxi.com" in lower:
-        return raw if lower.endswith("/v1") else DEFAULT_BASE
+        return DEFAULT_BASE if not lower.endswith("/v1") else (
+            "https://api.minimaxi.com/v1"
+        )
+    # Unknown host — dogfood on CN (keys are CN-scoped)
     return DEFAULT_BASE
 
 
@@ -278,10 +399,11 @@ def _chat_raw(
     temperature: float = 0.9,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (parsed_obj|None, error_reason). error empty on success."""
-    key = resolve_api_key()
-    if not key:
-        return None, "no_key"
-    base, model = resolve_base_and_model()
+    cfg = resolve_minimax()
+    if not cfg.api_key:
+        return None, cfg.error or "no_key"
+    key = cfg.api_key
+    base, model = cfg.base_url, cfg.model
     url = f"{base}/chat/completions"
     body = {"model": model, "messages": messages, "temperature": temperature}
     req = urllib.request.Request(
@@ -623,7 +745,12 @@ def continuous_enrich(
         "last_ms": 0,
         "content_hash": "",
     }
-    if not has_api_key():
+    cfg0 = resolve_minimax()
+    if not cfg0.api_key:
+        if cfg0.error == _HINT_KEY_MISSING_FILE:
+            extras["minimax_status"] = "fail"
+            extras["minimax_error"] = _HINT_KEY_MISSING_FILE
+            return rule_based_copy(scene), extras, "copy/offline(key-file-missing)"
         extras["minimax_status"] = "no_key"
         return rule_based_copy(scene), extras, "copy/offline(no-key)"
     if not use_minimax:
