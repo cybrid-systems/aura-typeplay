@@ -1,0 +1,195 @@
+; aura-typeplay — Soft-native LIVE mutate of scene AST attributes
+; Persistent serve: typeplay-live-boot once, then run-typeplay-live-tick per observe.
+; Multi-fiber worldlines mutate:rebind DISTINCT cand-* attrs (Unique/sandbox Guard);
+; select-best lands into live scene-* ; write scene.json with compile:epoch.
+; Soft observe ≠ Hard. AURA_BIN=/workspace/aura-grok/build/aura
+; Host is thin display — product brain is Soft mutate, not Python scene swap.
+(export
+  typeplay-live-boot
+  typeplay-live-booted?
+  run-typeplay-live-tick)
+
+(require "typeplay_session" all:)
+(require "typeplay_observe" all:)
+(require "typeplay_scene" all:)
+(require "std/io" all:)
+
+(define *typeplay-live-booted* #f)
+
+(define (typeplay-live-booted?)
+  *typeplay-live-booted*)
+
+(define (typeplay-escape-str s)
+  ; Minimal escape for embedding in mutate:rebind lambda source.
+  s)
+
+(define (typeplay-live-boot)
+  ; FlatAST workspace with live scene attributes + worldline candidate slots.
+  (set-code
+    (string-append
+      "(define (scene-id) \"forest\")"
+      "(define (scene-hue) \"green\")"
+      "(define (scene-energy) 0.3)"
+      "(define (scene-title) \"Quiet Forest\")"
+      "(define (scene-mood) \"cozy\")"
+      "(define (feedback-en) \"Ready\")"
+      "(define (feedback-zh) \"准备好\")"
+      "(define (burst) \"gentle\")"
+      "(define (glyph-scale) 1.0)"
+      "(define (art-key) \"forest\")"
+      "(define (cand-0) \"focus\")"
+      "(define (cand-1) \"forest\")"
+      "(define (cand-2) \"meadow\")"
+      "(define (cand-3) \"ocean\")"
+      "(define (cand-4) \"space\")"
+      "(define (cand-5) \"party\")"
+      "(define (live-tick) 0)"))
+  (eval-current)
+  (set! *typeplay-live-booted* #t)
+  (hash "ok" #t "booted" #t "kernel" "aura" "soft_mutate" #t))
+
+(define (typeplay-cand-name i)
+  (cond
+    ((= i 0) "cand-0")
+    ((= i 1) "cand-1")
+    ((= i 2) "cand-2")
+    ((= i 3) "cand-3")
+    ((= i 4) "cand-4")
+    (#t "cand-5")))
+
+(define (typeplay-cand-id i)
+  (cond
+    ((= i 0) "focus")
+    ((= i 1) "forest")
+    ((= i 2) "meadow")
+    ((= i 3) "ocean")
+    ((= i 4) "space")
+    (#t "party")))
+
+(define (typeplay-fiber-worldline i acc wpm streak rhythm theme gate storm)
+  ; One worldline: mutate that cand-* slot to its theme id, return score hash.
+  (let* ((name (typeplay-cand-name i))
+         (id (typeplay-cand-id i))
+         (src (string-append "(lambda () \"" id "\")"))
+         (_ (mutate:rebind name src (string-append "wl-" id)))
+         (_2 (eval-current))
+         (sc (typeplay-score-candidate id acc wpm streak rhythm theme gate storm)))
+    (hash "i" i "id" id "score" sc "name" name)))
+
+(define (typeplay-land-winner id)
+  (let* ((meta (typeplay-scene-meta id))
+         (hue (hash-ref meta "hue" "green"))
+         (energy (hash-ref meta "energy" 0.3))
+         (title (hash-ref meta "title" id))
+         (mood (hash-ref meta "mood" "cozy"))
+         (burst (cond
+                  ((equal? id "party") "party")
+                  ((equal? id "focus") "soft")
+                  ((equal? id "space") "sparkle")
+                  (#t "gentle")))
+         (gs (if (equal? id "party") 1.4 1.1))
+         (fen (cond
+                ((equal? id "party") "Streak party!")
+                ((equal? id "ocean") "Breathe with the waves")
+                ((equal? id "focus") "Slow and steady")
+                (#t "Keep going")))
+         (fzh (cond
+                ((equal? id "party") "连击派对！")
+                ((equal? id "ocean") "跟着海浪呼吸")
+                ((equal? id "focus") "慢慢来稳稳的")
+                (#t "继续加油")))
+         (_ (mutate:rebind "scene-id" (string-append "(lambda () \"" id "\")") "land-id"))
+         (_2 (mutate:rebind "scene-hue" (string-append "(lambda () \"" hue "\")") "land-hue"))
+         (_3 (mutate:rebind "scene-energy" (string-append "(lambda () " (number->string energy) ")") "land-e"))
+         (_4 (mutate:rebind "scene-title" (string-append "(lambda () \"" title "\")") "land-t"))
+         (_5 (mutate:rebind "scene-mood" (string-append "(lambda () \"" mood "\")") "land-m"))
+         (_6 (mutate:rebind "art-key" (string-append "(lambda () \"" id "\")") "land-art"))
+         (_7 (mutate:rebind "burst" (string-append "(lambda () \"" burst "\")") "land-b"))
+         (_8 (mutate:rebind "glyph-scale" (string-append "(lambda () " (number->string gs) ")") "land-g"))
+         (_9 (mutate:rebind "feedback-en" (string-append "(lambda () \"" fen "\")") "land-fe"))
+         (_10 (mutate:rebind "feedback-zh" (string-append "(lambda () \"" fzh "\")") "land-fz"))
+         (_11 (eval-current)))
+    (hash "id" id "hue" hue "energy" energy "title" title "mood" mood
+          "burst" burst "glyph_scale" gs
+          "feedback_en" fen "feedback_zh" fzh "art_key" id)))
+
+(define (typeplay-write-live-scene landed epoch tick)
+  (let* ((style (hash "glyph_scale" (hash-ref landed "glyph_scale" 1.0)
+                      "burst" (hash-ref landed "burst" "gentle")
+                      "mood" (hash-ref landed "mood" "cozy")
+                      "hue" (hash-ref landed "hue" "green")))
+         (scene (hash "id" (hash-ref landed "id")
+                      "title" (hash-ref landed "title")
+                      "hue" (hash-ref landed "hue")
+                      "energy" (hash-ref landed "energy")
+                      "mood" (hash-ref landed "mood")
+                      "art_key" (hash-ref landed "art_key")
+                      "style" style
+                      "feedback_en" (hash-ref landed "feedback_en")
+                      "feedback_zh" (hash-ref landed "feedback_zh")
+                      "source" "soft-live-mutate"
+                      "soft_mutate" #t
+                      "select" "fiber-select-best"
+                      "n_worldlines" 6
+                      "compile_epoch" epoch
+                      "live_tick" tick
+                      "soft_observe_ne_hard" #t
+                      "kernel" "aura")))
+    (write-file (typeplay-scene-path) (json-encode scene))
+    scene))
+
+(define (run-typeplay-live-tick)
+  ; Observe → fiber worldlines mutate cand-* → select-best → land scene-* → scene.json
+  (if (not *typeplay-live-booted*)
+    (typeplay-live-boot)
+    #t)
+  (let* ((bundle (typeplay-observe-bundle))
+         (sig (hash-ref bundle "signals" (hash)))
+         (gate-h (hash-ref bundle "gate" (hash)))
+         (gate (hash-ref gate-h "gate" "green"))
+         (storm (hash-ref gate-h "storm_red" #f))
+         (acc (hash-ref sig "accuracy" 1.0))
+         (wpm (hash-ref sig "wpm" 0.0))
+         (streak (hash-ref sig "streak" 0))
+         (rhythm (hash-ref sig "rhythm_cv" 0.0))
+         (theme (hash-ref sig "theme_scene" ""))
+         (epoch0 (or (stats:get "compile:epoch") 0))
+         ; Multi-fiber worldlines (distinct cand-* names — Unique Guard safe)
+         (f0 (fiber:spawn (lambda () (typeplay-fiber-worldline 0 acc wpm streak rhythm theme gate storm))))
+         (f1 (fiber:spawn (lambda () (typeplay-fiber-worldline 1 acc wpm streak rhythm theme gate storm))))
+         (f2 (fiber:spawn (lambda () (typeplay-fiber-worldline 2 acc wpm streak rhythm theme gate storm))))
+         (f3 (fiber:spawn (lambda () (typeplay-fiber-worldline 3 acc wpm streak rhythm theme gate storm))))
+         (f4 (fiber:spawn (lambda () (typeplay-fiber-worldline 4 acc wpm streak rhythm theme gate storm))))
+         (f5 (fiber:spawn (lambda () (typeplay-fiber-worldline 5 acc wpm streak rhythm theme gate storm))))
+         (r0 (fiber:join f0))
+         (r1 (fiber:join f1))
+         (r2 (fiber:join f2))
+         (r3 (fiber:join f3))
+         (r4 (fiber:join f4))
+         (r5 (fiber:join f5))
+         (results (list r0 r1 r2 r3 r4 r5))
+         (best (let loop ((xs results) (b r0))
+                 (if (null? xs)
+                   b
+                   (let ((x (car xs)))
+                     (if (> (hash-ref x "score" 0) (hash-ref b "score" 0))
+                       (loop (cdr xs) x)
+                       (loop (cdr xs) b))))))
+         (win-id (hash-ref best "id" "forest"))
+         (landed (typeplay-land-winner win-id))
+         (epoch1 (or (stats:get "compile:epoch") 0))
+         (tick (+ 1 (or (live-tick) 0)))
+         (_t (mutate:rebind "live-tick" (string-append "(lambda () " (number->string tick) ")") "tick"))
+         (_te (eval-current))
+         (scene (typeplay-write-live-scene landed epoch1 tick)))
+    (display "TYPEPLAY_LIVE ok=true id=")
+    (display win-id)
+    (display " epoch=")
+    (display epoch0)
+    (display "->")
+    (display epoch1)
+    (display " tick=")
+    (display tick)
+    (display " fibers=6 soft_mutate=true")
+    (newline)
+    scene))

@@ -143,11 +143,13 @@ def apply_soft_scene(data: dict | None, signals: dict) -> tuple[Scene, str] | No
     """Map Soft scene.json → host Scene. None → caller uses offline fallback."""
     if not data or not isinstance(data, dict):
         return None
-    if data.get("source") not in ("soft", "soft-probe"):
-        # still accept if Soft wrote id we know
-        if not data.get("id"):
-            return None
-    sid = str(data.get("id") or "")
+    src = str(data.get("source") or "")
+    softish = src in ("soft", "soft-probe", "soft-live-mutate") or bool(
+        data.get("soft_mutate")
+    )
+    if not softish and not data.get("id"):
+        return None
+    sid = str(data.get("id") or data.get("art_key") or "")
     if sid in SCENES:
         base = SCENES[sid]
         hue = str(data.get("hue") or base.hue)
@@ -156,9 +158,13 @@ def apply_soft_scene(data: dict | None, signals: dict) -> tuple[Scene, str] | No
         except (TypeError, ValueError):
             energy = base.energy
         title = str(data.get("title") or base.title)
+        blurb = str(data.get("feedback_zh") or data.get("blurb") or base.blurb)
+        # MiniMax may later replace art; Soft lands art_key → library art
+        art = str(data.get("art") or "") or base.art
+        tag = "soft-live" if data.get("soft_mutate") else "soft"
         return Scene(
-            id=sid, title=title, art=base.art, hue=hue, energy=energy, blurb=base.blurb
-        ), "soft"
+            id=sid, title=title, art=art, hue=hue, energy=energy, blurb=blurb
+        ), tag
     # custom Soft/MiniMax art payload
     custom = scene_from_proposal(data)
     if custom:

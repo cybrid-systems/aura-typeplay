@@ -1,8 +1,11 @@
-"""Background Soft + MiniMax auto-evolve — never blocks the typing TUI.
+"""Background Soft LIVE mutate + optional MiniMax copy — thin host display.
 
-Soft multi-propose + select-best owns scene id/hue/energy.
-MiniMax continuously proposes copy/style/feedback; host thin select-best.
-Offline fallback when Soft/key unavailable.
+Soft owns product brain: persistent serve → fiber worldlines mutate:rebind
+scene AST attrs → select-best → scene.json (compile_epoch / live_tick).
+Python does NOT invent scene evolution — it displays Soft landings.
+
+MiniMax (only if KEY): proposes copy/feedback; status chip:
+  no_key | probing | ok (last_ms + hash) | fail (short error).
 """
 
 from __future__ import annotations
@@ -12,7 +15,6 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Callable
 
 from host import soft_bridge
@@ -29,11 +31,18 @@ class EvolveSnapshot:
     feedback_zh: str = ""
     line_flavor: str = ""
     soft_ok: bool = False
+    soft_mutate: bool = False
+    compile_epoch: int = 0
+    live_tick: int = 0
+    minimax_status: str = "no_key"  # no_key | probing | ok | fail
+    minimax_error: str = ""
+    minimax_last_ms: int = 0
+    minimax_hash: str = ""
     updated_at: float = 0.0
 
 
 class EvolveWorker:
-    """Daemon thread: Soft evolve → MiniMax multi-propose → publish snapshot."""
+    """Daemon: Soft live-mutate tick → optional MiniMax → publish snapshot."""
 
     def __init__(
         self,
@@ -60,26 +69,35 @@ class EvolveWorker:
 
     def snapshot(self) -> EvolveSnapshot:
         with self._lock:
+            s = self._snap
             return EvolveSnapshot(
-                scene=self._snap.scene,
-                source=self._snap.source,
-                style=dict(self._snap.style),
-                feedback_en=self._snap.feedback_en,
-                feedback_zh=self._snap.feedback_zh,
-                line_flavor=self._snap.line_flavor,
-                soft_ok=self._snap.soft_ok,
-                updated_at=self._snap.updated_at,
+                scene=s.scene,
+                source=s.source,
+                style=dict(s.style),
+                feedback_en=s.feedback_en,
+                feedback_zh=s.feedback_zh,
+                line_flavor=s.line_flavor,
+                soft_ok=s.soft_ok,
+                soft_mutate=s.soft_mutate,
+                compile_epoch=s.compile_epoch,
+                live_tick=s.live_tick,
+                minimax_status=s.minimax_status,
+                minimax_error=s.minimax_error,
+                minimax_last_ms=s.minimax_last_ms,
+                minimax_hash=s.minimax_hash,
+                updated_at=s.updated_at,
             )
 
     def notify_signals(self) -> None:
-        """Typing just updated observe — nudge sooner (non-blocking)."""
         self._kick.set()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
-        self._thread = threading.Thread(target=self._loop, name="typeplay-evolve", daemon=True)
+        self._thread = threading.Thread(
+            target=self._loop, name="typeplay-evolve", daemon=True
+        )
         self._thread.start()
 
     def stop(self) -> None:
@@ -92,7 +110,6 @@ class EvolveWorker:
     def _publish(self, snap: EvolveSnapshot) -> None:
         with self._lock:
             self._snap = snap
-        # Drop JSON for Soft/tools
         try:
             d = soft_bridge.socket_dir()
             d.mkdir(parents=True, exist_ok=True)
@@ -106,6 +123,13 @@ class EvolveWorker:
                         "zh": snap.feedback_zh,
                         "line_flavor": snap.line_flavor,
                         "source": snap.source,
+                        "compile_epoch": snap.compile_epoch,
+                        "live_tick": snap.live_tick,
+                        "soft_mutate": snap.soft_mutate,
+                        "minimax_status": snap.minimax_status,
+                        "minimax_error": snap.minimax_error,
+                        "last_ms": snap.minimax_last_ms,
+                        "content_hash": snap.minimax_hash,
                     },
                     indent=2,
                     ensure_ascii=False,
@@ -116,30 +140,12 @@ class EvolveWorker:
         except OSError:
             pass
 
-    def _select_soft_scene(self, signals: dict[str, Any]) -> tuple[Scene, str, bool, dict]:
-        style: dict[str, Any] = {}
-        if self.mode in ("soft", "minimax"):
-            got = soft_bridge.evolve_with_soft(signals, serve=self.soft)
-            applied = apply_soft_scene(got.get("scene"), signals) if got.get("ok") else None
-            if applied:
-                scene, _ = applied
-                raw = got.get("scene") or {}
-                if isinstance(raw.get("style"), dict):
-                    style = raw["style"]
-                return scene, f"soft/{got.get('via')}", True, style
-        # offline / Soft down
-        theme = str(signals.get("theme_scene") or "")
-        if theme in SCENES and float(signals.get("accuracy", 1)) >= 0.75:
-            return SCENES[theme], "offline/theme", False, style
-        return rule_based_scene(signals), "offline/rules", False, style
-
     def _want_minimax(self) -> bool:
         if not has_api_key():
             return False
         if self.mode == "minimax":
             return True
         if self.mode == "soft":
-            # Soft mode: continuous MiniMax copy when key present (auto chat evolve)
             return os.environ.get("TYPEPLAY_MINIMAX_COPY", "1").strip() not in (
                 "0",
                 "false",
@@ -147,25 +153,110 @@ class EvolveWorker:
             )
         return False
 
+    def _soft_live(self, signals: dict[str, Any]) -> tuple[Scene, str, bool, dict, dict]:
+        """Soft live-mutate (preferred). Returns scene, source, ok, style, raw."""
+        style: dict[str, Any] = {}
+        raw: dict[str, Any] = {}
+        if self.mode not in ("soft", "minimax"):
+            theme = str(signals.get("theme_scene") or "")
+            if theme in SCENES and float(signals.get("accuracy", 1)) >= 0.75:
+                return SCENES[theme], "offline/theme", False, style, raw
+            return rule_based_scene(signals), "offline/rules", False, style, raw
+
+        got = soft_bridge.evolve_live(signals, serve=self.soft)
+        raw = got.get("scene") or {}
+        applied = apply_soft_scene(raw, signals) if got.get("ok") else None
+        if applied:
+            scene, tag = applied
+            if isinstance(raw.get("style"), dict):
+                style = dict(raw["style"])
+            # Soft-native feedback until MiniMax overlays
+            via = got.get("via") or "live"
+            return scene, f"soft-live/{via}", True, style, raw
+        # Soft down — honest offline display (not Python inventing Soft)
+        theme = str(signals.get("theme_scene") or "")
+        if theme in SCENES:
+            return SCENES[theme], "offline(soft_down)", False, style, raw
+        return rule_based_scene(signals), "offline(soft_down)", False, style, raw
+
     def _round(self) -> None:
         self._busy = True
         try:
             signals = self.signals_fn()
             soft_bridge.write_observe(signals)
-            scene, source, soft_ok, style = self._select_soft_scene(signals)
-            scene2, extras, tag = continuous_enrich(
-                scene, signals, use_minimax=self._want_minimax()
-            )
-            if extras.get("style"):
-                style = {**style, "burst": extras["style"], "mood": style.get("mood", "")}
+            scene, source, soft_ok, style, raw = self._soft_live(signals)
+
+            mm_status = "no_key"
+            mm_err = ""
+            mm_ms = 0
+            mm_hash = ""
+            fb_en = str(raw.get("feedback_en") or "")
+            fb_zh = str(raw.get("feedback_zh") or "")
+            line_flavor = ""
+
+            want_mm = self._want_minimax()
+            if not has_api_key():
+                mm_status = "no_key"
+                tag = "copy/offline(no-key)"
+                scene2 = scene
+            elif want_mm:
+                mm_status = "probing"
+                # Publish probing so TUI chip updates mid-round
+                self._publish(
+                    EvolveSnapshot(
+                        scene=scene,
+                        source=source + "+probing",
+                        style=style,
+                        feedback_en=fb_en,
+                        feedback_zh=fb_zh,
+                        soft_ok=soft_ok,
+                        soft_mutate=bool(raw.get("soft_mutate")),
+                        compile_epoch=int(raw.get("compile_epoch") or 0),
+                        live_tick=int(raw.get("live_tick") or 0),
+                        minimax_status="probing",
+                        updated_at=time.monotonic(),
+                    )
+                )
+                scene2, extras, tag = continuous_enrich(
+                    scene, signals, use_minimax=True
+                )
+                mm_status = str(extras.get("minimax_status") or "fail")
+                mm_err = str(extras.get("minimax_error") or "")
+                mm_ms = int(extras.get("last_ms") or 0)
+                mm_hash = str(extras.get("content_hash") or "")
+                if mm_status == "ok":
+                    if extras.get("feedback_en"):
+                        fb_en = str(extras["feedback_en"])
+                    if extras.get("feedback_zh"):
+                        fb_zh = str(extras["feedback_zh"])
+                    line_flavor = str(extras.get("line_flavor") or "")
+                    if extras.get("style"):
+                        style = {
+                            **style,
+                            "burst": extras["style"],
+                            "mood": style.get("mood", ""),
+                        }
+            else:
+                scene2, extras, tag = continuous_enrich(
+                    scene, signals, use_minimax=False
+                )
+                mm_status = "no_key"
+
             snap = EvolveSnapshot(
                 scene=scene2,
                 source=f"{source}+{tag}",
                 style=style,
-                feedback_en=str(extras.get("feedback_en") or ""),
-                feedback_zh=str(extras.get("feedback_zh") or ""),
-                line_flavor=str(extras.get("line_flavor") or ""),
+                feedback_en=fb_en,
+                feedback_zh=fb_zh,
+                line_flavor=line_flavor,
                 soft_ok=soft_ok,
+                soft_mutate=bool(raw.get("soft_mutate")),
+                compile_epoch=int(raw.get("compile_epoch") or 0),
+                live_tick=int(raw.get("live_tick") or 0),
+                minimax_status=mm_status,
+                minimax_error=mm_err,
+                minimax_last_ms=mm_ms,
+                minimax_hash=mm_hash,
                 updated_at=time.monotonic(),
             )
             self._publish(snap)
@@ -173,7 +264,6 @@ class EvolveWorker:
             self._busy = False
 
     def _loop(self) -> None:
-        # Continuous background Soft+MiniMax chat evolve while playing.
         while not self._stop.is_set():
             try:
                 self._round()
@@ -181,6 +271,5 @@ class EvolveWorker:
                 pass
             if self._stop.is_set():
                 break
-            # Sleep between rounds; typing can kick for a sooner refresh.
             self._kick.wait(timeout=self.interval_s)
             self._kick.clear()

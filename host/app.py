@@ -40,12 +40,22 @@ class MetricsPanel(Static):
         progress: LevelProgress,
         burst: str,
         evolve_source: str,
+        *,
+        epoch: int = 0,
+        live_tick: int = 0,
+        soft_mutate: bool = False,
+        mm_chip: str = "",
     ) -> None:
         s = score.observe_signals()
         st = progress.status()
         stars = "⭐" * min(5, max(1, st["ok_lines"]))
         streak_bar = "🔥" * min(8, s["streak"] // 2) if s["streak"] else "💤"
         src = evolve_source or "boot"
+        soft_badge = (
+            f"[bold #9f9]🧬 Soft AST epoch={epoch} tick={live_tick}[/]"
+            if soft_mutate
+            else "[dim]Soft mutate: idle[/]"
+        )
         self.update(
             f"[bold #ffd700]Lv{st['level_idx']+1}[/] "
             f"[bold]{st['level_title_en']}[/] [cyan]{st['level_title_zh']}[/]  {stars}\n"
@@ -53,7 +63,8 @@ class MetricsPanel(Static):
             f"[magenta]速度 WPM {s['wpm']:4.0f}[/]   "
             f"[yellow]连击 {s['streak']}[/] {streak_bar}   "
             f"[dim]burst={burst}[/]\n"
-            f"[bold #8cf]📡 进化来源 evolve:[/] [white]{src}[/]"
+            f"{soft_badge}   {mm_chip}\n"
+            f"[bold #8cf]📡 evolve:[/] [white]{src}[/]"
         )
 
 
@@ -90,7 +101,16 @@ class TargetPanel(Static):
 
 
 class ScenePanel(Static):
-    def show(self, scene: Scene, source: str, morph_tick: int) -> None:
+    def show(
+        self,
+        scene: Scene,
+        source: str,
+        morph_tick: int,
+        *,
+        epoch: int = 0,
+        live_tick: int = 0,
+        soft_mutate: bool = False,
+    ) -> None:
         hue = scene.hue if scene.hue in {
             "green", "blue", "magenta", "yellow", "cyan", "white", "red"
         } else "cyan"
@@ -100,16 +120,22 @@ class ScenePanel(Static):
             art_lines[0] = f"{spark} {art_lines[0].strip()}"
         art = "\n".join(art_lines)
         blurb = f"\n[i #ddd]{scene.blurb}[/]" if scene.blurb else ""
-        ai = "minimax" in (source or "").lower()
-        badge = (
-            "[bold #ff88ff on #2a1030] 🎨 AI 画画 MiniMax [/]"
-            if ai
-            else "[bold #88aaff on #102030] 🌿 Soft 场景 [/]"
-        )
+        ai = "minimax" in (source or "").lower() and "fail" not in (source or "").lower()
+        if soft_mutate:
+            badge = (
+                f"[bold #66ffaa on #0a2818] 🧬 Soft live-mutate AST  "
+                f"epoch={epoch} tick={live_tick} [/]"
+            )
+        elif ai:
+            badge = "[bold #ff88ff on #2a1030] 🎨 AI 画画 MiniMax [/]"
+        else:
+            badge = "[bold #88aaff on #102030] 🌿 Soft 场景 [/]"
+        if ai and soft_mutate:
+            badge += "\n[bold #ff88ff]🎨 + MiniMax 文案[/]"
         self.update(
             f"{badge}\n"
             f"[bold {hue} on #1a1a2e] {scene.title} [/]\n"
-            f"[dim]{scene.id} · e={scene.energy:.2f}[/]"
+            f"[dim]{scene.id} · e={scene.energy:.2f} · morph#{morph_tick}[/]"
             f"{blurb}\n\n"
             f"[{hue}]{art}[/]"
         )
@@ -127,24 +153,77 @@ class ReactionPanel(Static):
         )
 
 
-class StarSpeakPanel(Static):
-    """Dedicated MiniMax strip — 「小星星说」."""
+def minimax_status_chip(
+    status: str,
+    *,
+    last_ms: int = 0,
+    err: str = "",
+    content_hash: str = "",
+) -> str:
+    """Parent-visible MiniMax connectivity chip."""
+    st = (status or "no_key").lower()
+    if st == "ok":
+        h = f" #{content_hash}" if content_hash else ""
+        return f"[bold black on #66ff99] MiniMax OK {last_ms}ms{h} [/]"
+    if st == "probing":
+        return "[bold black on #ffdd66] MiniMax probing… [/]"
+    if st == "fail":
+        short = (err or "error")[:28]
+        return f"[bold white on #cc3344] MiniMax FAIL ({short}) [/]"
+    return "[bold white on #555577] MiniMax 未接 KEY [/]"
 
-    def show(self, en: str, zh: str, line_flavor: str, has_mm: bool) -> None:
-        if not has_mm and not en and not zh:
+
+class StarSpeakPanel(Static):
+    """Dedicated MiniMax strip — 「小星星说」+ connectivity chip."""
+
+    def show(
+        self,
+        en: str,
+        zh: str,
+        line_flavor: str,
+        *,
+        mm_status: str = "no_key",
+        last_ms: int = 0,
+        mm_error: str = "",
+        content_hash: str = "",
+    ) -> None:
+        chip = minimax_status_chip(
+            mm_status, last_ms=last_ms, err=mm_error, content_hash=content_hash
+        )
+        st = (mm_status or "no_key").lower()
+        if st == "no_key":
             self.update(
-                "[bold #ffd700]🌟 小星星说[/]  [dim]（等 MiniMax 钥匙 / waiting for AI copy…）[/]\n"
-                "  [dim]Soft 选场景 · MiniMax 写文案与鼓励话[/]"
+                f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
+                "  [bold #faa]未接 MiniMax[/] — 设置 MINIMAX_API_KEY 后这里会刷新文案\n"
+                "  [dim]Soft 正在 mutate 场景 AST；小星星只负责说话/画画文案[/]"
             )
             return
+        if st == "probing":
+            self.update(
+                f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
+                "  [italic]正在呼叫 MiniMax… Soft AST 继续跳动[/]"
+            )
+            return
+        if st == "fail":
+            self.update(
+                f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
+                f"  [red]API 失败[/] {mm_error or 'unknown'} — Soft 场景仍由 mutate 驱动\n"
+                f"  [dim]上次 Soft 鼓励：[/] [cyan]{zh or '…'}[/]  [dim]{en or ''}[/]"
+            )
+            return
+        # ok — visibly refreshed copy
         zh_line = zh or "…"
         en_line = en or "…"
-        flavor = f"\n  [italic #aaf]下一句味道 next vibe: {line_flavor}[/]" if line_flavor else ""
+        flavor = (
+            f"\n  [italic #aaf]下一句味道: {line_flavor}[/]" if line_flavor else ""
+        )
+        h = f"  hash={content_hash}" if content_hash else ""
         self.update(
-            f"[bold #ffd700 on #302010] 🌟 小星星说 MiniMax [/]\n"
+            f"[bold #ffd700 on #302010] 🌟 小星星说 MiniMax [/]  {chip}\n"
             f"  [bold cyan]{zh_line}[/]\n"
             f"  [bold #ffd]{en_line}[/]"
-            f"{flavor}"
+            f"{flavor}\n"
+            f"  [dim]refreshed {last_ms}ms{h}[/]"
         )
 
 
@@ -157,7 +236,7 @@ class TypeplayApp(App):
         background: #0f0f1a;
     }
     #metrics {
-        height: 5;
+        height: 6;
         padding: 0 1;
         border: heavy #ffd700;
         background: #1a1430;
@@ -178,7 +257,7 @@ class TypeplayApp(App):
         text-align: center;
     }
     #star {
-        height: 5;
+        height: 6;
         padding: 0 1;
         border: heavy #ffd700;
         background: #281808;
@@ -231,6 +310,13 @@ class TypeplayApp(App):
         self._line_flavor = ""
         self._morph_tick = 0
         self._keys_since_kick = 0
+        self._mm_status = "no_key"
+        self._mm_error = ""
+        self._mm_ms = 0
+        self._mm_hash = ""
+        self._compile_epoch = 0
+        self._live_tick = 0
+        self._soft_mutate = False
         # After a wrong key: must hit expected; ignore other printable noise
         self._waiting_correct = False
         self._last_wrong_fb_at = 0.0
@@ -297,8 +383,21 @@ class TypeplayApp(App):
         react.add_class(f"burst-{self._burst}")
 
     def _refresh_all(self) -> None:
+        chip = minimax_status_chip(
+            self._mm_status,
+            last_ms=self._mm_ms,
+            err=self._mm_error,
+            content_hash=self._mm_hash,
+        )
         self.query_one("#metrics", MetricsPanel).show(
-            self.score, self.progress, self._burst, self.scene_source
+            self.score,
+            self.progress,
+            self._burst,
+            self.scene_source,
+            epoch=self._compile_epoch,
+            live_tick=self._live_tick,
+            soft_mutate=self._soft_mutate,
+            mm_chip=chip,
         )
         self.query_one("#target", TargetPanel).show(
             self.target,
@@ -311,14 +410,22 @@ class TypeplayApp(App):
             self._waiting_correct,
         )
         self.query_one("#scene", ScenePanel).show(
-            self.scene, self.scene_source, self._morph_tick
+            self.scene,
+            self.scene_source,
+            self._morph_tick,
+            epoch=self._compile_epoch,
+            live_tick=self._live_tick,
+            soft_mutate=self._soft_mutate,
         )
         self.query_one("#reaction", ReactionPanel).show(self._fb)
         self.query_one("#star", StarSpeakPanel).show(
             self._async_en,
             self._async_zh,
             self._line_flavor,
-            has_api_key(),
+            mm_status=self._mm_status,
+            last_ms=self._mm_ms,
+            mm_error=self._mm_error,
+            content_hash=self._mm_hash,
         )
         self._apply_burst_class()
         # Keep status hint fresh with last evolve source
@@ -336,10 +443,21 @@ class TypeplayApp(App):
         snap = self._worker.snapshot()
         if snap.updated_at <= 0:
             return
-        if snap.scene.id != self.scene.id or snap.scene.art != self.scene.art:
+        if (
+            snap.scene.id != self.scene.id
+            or snap.scene.art != self.scene.art
+            or int(getattr(snap, "compile_epoch", 0) or 0) != self._compile_epoch
+        ):
             self._morph_tick += 1
         self.scene = snap.scene
         self.scene_source = snap.source
+        self._soft_mutate = bool(getattr(snap, "soft_mutate", False))
+        self._compile_epoch = int(getattr(snap, "compile_epoch", 0) or 0)
+        self._live_tick = int(getattr(snap, "live_tick", 0) or 0)
+        self._mm_status = str(getattr(snap, "minimax_status", "no_key") or "no_key")
+        self._mm_error = str(getattr(snap, "minimax_error", "") or "")
+        self._mm_ms = int(getattr(snap, "minimax_last_ms", 0) or 0)
+        self._mm_hash = str(getattr(snap, "minimax_hash", "") or "")
         if snap.style:
             try:
                 self._glyph_scale = float(snap.style.get("glyph_scale") or self._glyph_scale)

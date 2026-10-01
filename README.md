@@ -91,6 +91,10 @@ make smoke-minimax-copy             # filter smoke (+ live if key set)
 ```
 
 
+## Soft live-mutate (Aura-native)
+
+Soft fiber worldlines `mutate:rebind` scene AST as you type — see [`docs/live-mutate.md`](docs/live-mutate.md). Host only displays `compile_epoch` / morph. MiniMax chip on 「小星星说」: 未接 KEY / probing / OK / FAIL.
+
 ## Auto-evolve (no Ctrl+E)
 
 Typing itself drives Soft + MiniMax in the **background**. See [`docs/auto-evolve.md`](docs/auto-evolve.md).

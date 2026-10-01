@@ -396,20 +396,52 @@ def continuous_enrich(
 ) -> tuple[Scene, dict[str, Any], str]:
     """Background path: multi-propose → select-best → scene + extras.
 
-    Returns (scene, extras, tag). extras may include style/feedback/line_flavor.
+    Returns (scene, extras, tag). extras always includes minimax_status:
+      no_key | probing | ok | fail
+    plus last_ms / content_hash when a propose ran.
     """
-    extras: dict[str, Any] = {}
-    if not use_minimax or not has_api_key():
+    import hashlib
+    import time as _time
+
+    extras: dict[str, Any] = {
+        "minimax_status": "no_key",
+        "minimax_error": "",
+        "last_ms": 0,
+        "content_hash": "",
+    }
+    if not has_api_key():
+        extras["minimax_status"] = "no_key"
+        return rule_based_copy(scene), extras, "copy/offline(no-key)"
+    if not use_minimax:
+        extras["minimax_status"] = "no_key"
         return rule_based_copy(scene), extras, "copy/offline"
-    cands = propose_copy_multi(scene, signals)
+    extras["minimax_status"] = "probing"
+    t0 = _time.monotonic()
+    try:
+        cands = propose_copy_multi(scene, signals)
+    except Exception as exc:  # noqa: BLE001
+        extras["minimax_status"] = "fail"
+        extras["minimax_error"] = type(exc).__name__[:40]
+        extras["last_ms"] = int((_time.monotonic() - t0) * 1000)
+        return rule_based_copy(scene), extras, "copy/minimax-fail"
+    elapsed = int((_time.monotonic() - t0) * 1000)
+    extras["last_ms"] = elapsed
     chosen = select_best_copy(cands, scene, signals)
     if not chosen:
-        return rule_based_copy(scene), extras, "copy/offline(fallback)"
-    extras = {
-        "style": chosen.get("style") or "gentle",
-        "feedback_en": chosen.get("feedback_en") or "",
-        "feedback_zh": chosen.get("feedback_zh") or "",
-        "line_flavor": chosen.get("line_flavor") or "",
-        "n_propose": len(cands),
-    }
+        extras["minimax_status"] = "fail"
+        extras["minimax_error"] = "empty_or_filtered"
+        return rule_based_copy(scene), extras, "copy/minimax-fail"
+    blob = json.dumps(chosen, ensure_ascii=False, sort_keys=True)
+    extras.update(
+        {
+            "minimax_status": "ok",
+            "minimax_error": "",
+            "content_hash": hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10],
+            "style": chosen.get("style") or "gentle",
+            "feedback_en": chosen.get("feedback_en") or "",
+            "feedback_zh": chosen.get("feedback_zh") or "",
+            "line_flavor": chosen.get("line_flavor") or "",
+            "n_propose": len(cands),
+        }
+    )
     return apply_copy(scene, chosen), extras, "copy/minimax-select-best"

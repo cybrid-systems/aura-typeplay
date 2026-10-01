@@ -26,6 +26,9 @@ DEFAULT_AURA_BIN = "/workspace/aura-grok/build/aura"
 DEFAULT_SOCKET_DIR = "/tmp/aura-typeplay"
 EVOLVE_FORM = '(begin (require "typeplay_scene" all:) (run-typeplay-evolve))'
 REQUIRE_FORM = '(require "typeplay_scene" all:)'
+LIVE_REQUIRE = '(require "typeplay_live" all:)'
+LIVE_BOOT = '(typeplay-live-boot)'
+LIVE_TICK = '(run-typeplay-live-tick)'
 
 
 def repo_root() -> Path:
@@ -65,6 +68,7 @@ def soft_env(*, aura_bin: str | None = None) -> dict[str, str]:
         "AURA_BIN": bin_path,
         "AURA_PATH": aura_path(),
         "AURA_SANDBOX": os.environ.get("AURA_SANDBOX") or "off",
+        "AURA_PIPELINE_STRICT": os.environ.get("AURA_PIPELINE_STRICT") or "0",
         "TYPEPLAY_SOCKET_DIR": str(socket_dir()),
     }
     return env
@@ -121,6 +125,7 @@ class SoftServe:
     aura_bin: str
     proc: subprocess.Popen[str] | None = None
     booted: bool = False
+    live_booted: bool = False
     last_error: str = ""
 
     @classmethod
@@ -157,6 +162,15 @@ class SoftServe:
             self.last_error = str(req.get("msg") or "serve_require_fail")
             self.stop()
             return self
+        # Soft-native live mutate workspace (fiber worldlines)
+        lr = self.eval_line(LIVE_REQUIRE, timeout_s=timeout_s)
+        if lr.get("status") == "ok":
+            boot = self.eval_line(LIVE_BOOT, timeout_s=min(45.0, timeout_s + 20))
+            if boot.get("status") != "ok":
+                self.last_error = str(boot.get("msg") or "live_boot_fail")
+                # keep serve for legacy evolve fallback
+            else:
+                self.live_booted = True
         self.booted = True
         return self
 
@@ -235,6 +249,100 @@ class SoftServe:
                     proc.kill()
         except OSError:
             pass
+
+
+
+def live_tick_serve(serve: SoftServe, *, timeout_s: float = 60.0) -> dict[str, Any]:
+    """One Soft live-mutate tick on persistent serve (fiber worldlines → land)."""
+    if serve is None or not serve.alive:
+        return {"ok": False, "via": "serve", "reason": "serve_dead", "scene": None}
+    if not getattr(serve, "live_booted", False):
+        serve.eval_line(LIVE_REQUIRE, timeout_s=min(30.0, timeout_s))
+        b = serve.eval_line(LIVE_BOOT, timeout_s=min(45.0, timeout_s))
+        if b.get("status") == "ok":
+            serve.live_booted = True
+    r = serve.eval_line(LIVE_TICK, timeout_s=timeout_s)
+    scene = read_scene()
+    ok = r.get("status") == "ok" and isinstance(scene, dict) and bool(
+        scene.get("soft_mutate") or scene.get("source") == "soft-live-mutate"
+    )
+    return {
+        "ok": ok,
+        "via": "serve-live",
+        "raw": r,
+        "scene": scene,
+        "soft_observe_ne_hard": True,
+        "soft_mutate": True,
+    }
+
+
+def live_tick_oneshot(*, timeout_s: float = 90.0, aura_bin: str | None = None) -> dict[str, Any]:
+    """Oneshot Soft live boot+tick (slower; serve preferred)."""
+    bin_path = resolve_aura_bin(aura_bin)
+    if not Path(bin_path).is_file():
+        return {"ok": False, "via": "oneshot-live", "reason": "aura_bin_missing", "scene": None}
+    socket_dir().mkdir(parents=True, exist_ok=True)
+    form = (
+        '(begin (require "typeplay_live" all:) '
+        "(typeplay-live-boot) (run-typeplay-live-tick))"
+    )
+    try:
+        proc = subprocess.run(
+            [bin_path, "-e", form],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            check=False,
+            env=soft_env(aura_bin=bin_path),
+            cwd=str(repo_root()),
+            start_new_session=True,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "ok": False,
+            "via": "oneshot-live",
+            "reason": f"exc:{type(exc).__name__}",
+            "scene": None,
+            "soft_mutate": True,
+        }
+    scene = read_scene()
+    stdout = (proc.stdout or "").strip()
+    ok = ("TYPEPLAY_LIVE ok=true" in stdout) and isinstance(scene, dict)
+    return {
+        "ok": ok,
+        "via": "oneshot-live",
+        "returncode": proc.returncode,
+        "stdout": stdout[:500],
+        "stderr": (proc.stderr or "")[:200],
+        "scene": scene,
+        "soft_observe_ne_hard": True,
+        "soft_mutate": True,
+    }
+
+
+def evolve_live(
+    signals: dict[str, Any],
+    *,
+    serve: SoftServe | None = None,
+    aura_bin: str | None = None,
+) -> dict[str, Any]:
+    """Preferred Soft path: live mutate tick. Falls back to legacy evolve."""
+    write_observe(signals)
+    if serve is not None and serve.alive:
+        got = live_tick_serve(serve)
+        if got.get("ok"):
+            return got
+        # serve live failed → oneshot live once
+        one = live_tick_oneshot(aura_bin=aura_bin or serve.aura_bin)
+        if one.get("ok"):
+            one["via"] = f"serve_live_fail→{one.get('via')}"
+            return one
+    else:
+        one = live_tick_oneshot(aura_bin=aura_bin)
+        if one.get("ok"):
+            return one
+    # last resort: legacy score-only evolve (still Soft .aura, not Python brain)
+    return evolve_with_soft(signals, serve=serve, aura_bin=aura_bin)
 
 
 def evolve_oneshot(*, timeout_s: float = 40.0, aura_bin: str | None = None) -> dict[str, Any]:
