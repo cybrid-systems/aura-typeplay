@@ -30,6 +30,7 @@ class EvolveSnapshot:
     feedback_en: str = ""
     feedback_zh: str = ""
     line_flavor: str = ""
+    targets: list = field(default_factory=list)  # DeepSeek typing words
     soft_ok: bool = False
     soft_mutate: bool = False
     compile_epoch: int = 0
@@ -81,6 +82,7 @@ class EvolveWorker:
                 feedback_en=s.feedback_en,
                 feedback_zh=s.feedback_zh,
                 line_flavor=s.line_flavor,
+                targets=list(s.targets or []),
                 soft_ok=s.soft_ok,
                 soft_mutate=s.soft_mutate,
                 compile_epoch=s.compile_epoch,
@@ -127,6 +129,8 @@ class EvolveWorker:
                         "en": snap.feedback_en,
                         "zh": snap.feedback_zh,
                         "line_flavor": snap.line_flavor,
+                        "targets": snap.targets,
+                        "note": "DeepSeek=copy+words; Soft=mutate AST",
                         "source": snap.source,
                         "compile_epoch": snap.compile_epoch,
                         "live_tick": snap.live_tick,
@@ -204,6 +208,7 @@ class EvolveWorker:
             fb_en = str(raw.get("feedback_en") or "")
             fb_zh = str(raw.get("feedback_zh") or "")
             line_flavor = ""
+            targets: list = []
             tag = "copy/offline"
 
             want_mm = self._want_llm_copy()
@@ -253,6 +258,7 @@ class EvolveWorker:
                     if extras.get("feedback_zh"):
                         fb_zh = str(extras["feedback_zh"])
                     line_flavor = str(extras.get("line_flavor") or "")
+                    targets = list(extras.get("targets") or [])
                     if extras.get("style"):
                         style = {
                             **style,
@@ -276,6 +282,7 @@ class EvolveWorker:
                 feedback_en=fb_en,
                 feedback_zh=fb_zh,
                 line_flavor=line_flavor,
+                targets=targets,
                 soft_ok=soft_ok,
                 soft_mutate=bool(raw.get("soft_mutate")),
                 compile_epoch=int(raw.get("compile_epoch") or 0),

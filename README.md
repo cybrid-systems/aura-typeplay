@@ -70,12 +70,16 @@ Advance: 3 lines at ≥85% line accuracy. Soft scene may hint the next theme for
 ## What you see: Soft vs DeepSeek
 
 - **Soft selects** scene id / hue / energy (multi-propose → select-best from typing signals).
-- **DeepSeek generates** kid-safe title, blurb, ASCII art, and bilingual cheers — shown in
+- **DeepSeek generates** kid-safe title, blurb, ASCII art, bilingual cheers, and **typing target words** — shown in
   the **「🌟 小星星说」** strip and as **「🎨 AI 画画」** on the scene panel when copy is live.
 - Top status shows last evolve source (`soft/…+copy/deepseek-select-best` or offline).
 
 Typing: wrong keys **do not advance**; the expected letter flashes huge until you hit it.
 **Backspace** undoes one correct char. Details: [`docs/auto-evolve.md`](docs/auto-evolve.md).
+
+## DeepSeek scene copy + words (default)
+
+Soft **mutates** aura AST. DeepSeek only writes **copy + typing words** (never edits `.aura`). No key → built-in level word lists.
 
 ## DeepSeek scene copy (default)
 

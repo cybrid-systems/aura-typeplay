@@ -45,3 +45,7 @@ export AURA_BIN=/workspace/aura-grok/build/aura
 make soft
 # optional copy — export KEY, or share ~/.config/aura-build/deepseek.env
 ```
+
+## DeepSeek words (not Soft mutate)
+
+DeepSeek proposes typing **targets** + scene **copy**. Soft fiber mutate still owns the live scene AST. Host never asks DeepSeek to edit `.aura` files. No key → built-in level word lists.

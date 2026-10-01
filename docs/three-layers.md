@@ -10,7 +10,7 @@
 
 - Kids typing UX: Textual host, lines, ANSI scenes
 - Thin bridge: `host/soft_bridge.py` starts Soft serve, writes observe.json, reads scene.json
-- Offline / MiniMax fallbacks when Soft down or mode≠soft
+- Offline / DeepSeek copy+words when Soft down; Soft alone mutates `.aura`
 
 ## 3. No Soft language hacks
 

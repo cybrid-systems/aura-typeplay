@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT))
 
 from host.app import minimax_status_chip  # noqa: E402
 from host.llm_copy import (  # noqa: E402
+    select_targets,
     _HINT_KEY_INVALID,
     _HINT_KEY_MISSING_FILE,
     _HTTP_401_HINT,
@@ -29,6 +30,7 @@ from host.llm_copy import (  # noqa: E402
     select_copy,
 )
 from host.scenes import SCENES  # noqa: E402
+from host.levels import LevelProgress  # noqa: E402
 
 
 def _assert_deepseek_keyfile_only() -> None:
@@ -89,6 +91,25 @@ def main() -> int:
     base = SCENES["meadow"]
     assert apply_copy(base, safe).id == "meadow"
     print("filter_ok")
+
+    # DeepSeek targets → host queue (Soft does NOT mutate from these)
+    tg, why = select_targets(
+        [
+            {"text": "soft cat", "hint_zh": "软猫"},
+            {"text": "kill mode"},
+            {"text": "yellow sun"},
+        ]
+    )
+    assert len(tg) == 2 and why.startswith("ok:")
+    lp = LevelProgress()
+    assert lp.offer_llm_targets(tg, source="deepseek") == 2
+    assert lp.target_text() == "soft cat"
+    lp.complete_line(1.0)
+    assert lp.target_text() == "yellow sun"
+    lp.clear_llm_targets()
+    assert not lp.using_llm_targets
+    print("targets_queue_ok", why)
+
 
     assert _sanitize_api_key("  Bearer sk-ab\n") == "sk-ab"
     assert _friendly_http_error(401) == _HTTP_401_HINT

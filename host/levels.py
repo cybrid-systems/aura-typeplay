@@ -7,7 +7,7 @@ No scary / violent content.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -188,19 +188,32 @@ def level_index(level_id: str) -> int:
 
 @dataclass
 class LevelProgress:
-    """Tracks current level and line; advances on accuracy streak of completed lines."""
+    """Tracks current level and line; advances on accuracy streak of completed lines.
+
+    Optional ``llm_queue``: DeepSeek-proposed kid-safe targets (ASCII). When
+    non-empty, typing pulls from the queue first; Soft mutate still owns scene
+    AST — the queue is host-only words, never writes ``.aura``.
+    """
 
     level_idx: int = 0
     line_idx: int = 0
     ok_lines: int = 0  # consecutive good completions in this level
     total_completed: int = 0
     last_line_accuracy: float = 1.0
+    llm_queue: list[Line] = field(default_factory=list)
+    llm_source: str = ""  # e.g. deepseek / empty = library
 
     @property
     def level(self) -> Level:
         return LEVELS[self.level_idx % len(LEVELS)]
 
+    @property
+    def using_llm_targets(self) -> bool:
+        return bool(self.llm_queue)
+
     def current_line(self) -> Line:
+        if self.llm_queue:
+            return self.llm_queue[0]
         lines = self.level.lines
         return lines[self.line_idx % len(lines)]
 
@@ -209,6 +222,38 @@ class LevelProgress:
 
     def hint_zh(self) -> str:
         return self.current_line().hint_zh
+
+    def offer_llm_targets(
+        self,
+        items: list[dict] | list[Line],
+        *,
+        source: str = "deepseek",
+        replace: bool = True,
+    ) -> int:
+        """Accept already-filtered targets into the queue. Returns count kept."""
+        lines: list[Line] = []
+        for it in items or []:
+            if isinstance(it, Line):
+                lines.append(it)
+                continue
+            if not isinstance(it, dict):
+                continue
+            text = str(it.get("text") or it.get("target") or "").strip()
+            hint = str(it.get("hint_zh") or it.get("hint") or "").strip()
+            if text:
+                lines.append(Line(text=text, hint_zh=hint))
+        if not lines:
+            return 0
+        if replace:
+            self.llm_queue = lines
+        else:
+            self.llm_queue.extend(lines)
+        self.llm_source = source
+        return len(lines)
+
+    def clear_llm_targets(self) -> None:
+        self.llm_queue.clear()
+        self.llm_source = ""
 
     def status(self) -> dict:
         lv = self.level
@@ -223,7 +268,18 @@ class LevelProgress:
             "lines_to_advance": LINES_TO_ADVANCE,
             "total_completed": self.total_completed,
             "hint_zh": self.hint_zh(),
+            "target_source": self.llm_source if self.llm_queue else "library",
+            "llm_queue_len": len(self.llm_queue),
         }
+
+    def _advance_cursor(self) -> None:
+        """Consume current target (LLM queue or library index)."""
+        if self.llm_queue:
+            self.llm_queue.pop(0)
+            if not self.llm_queue:
+                self.llm_source = ""
+            return
+        self.line_idx = (self.line_idx + 1) % len(self.level.lines)
 
     def complete_line(self, line_accuracy: float) -> dict:
         """Finish current line; maybe advance level. Returns event dict."""
@@ -235,12 +291,12 @@ class LevelProgress:
             self.ok_lines += 1
         else:
             self.ok_lines = 0
-        # next line in level
-        self.line_idx = (self.line_idx + 1) % len(self.level.lines)
+        self._advance_cursor()
         if self.ok_lines >= LINES_TO_ADVANCE and self.level_idx < len(LEVELS) - 1:
             self.level_idx += 1
             self.line_idx = 0
             self.ok_lines = 0
+            self.clear_llm_targets()  # new level → wait for fresh DeepSeek words
             advanced = True
         return {
             "advanced": advanced,
@@ -253,7 +309,7 @@ class LevelProgress:
     def skip_line(self) -> None:
         """Skip without counting as ok (breaks ok streak)."""
         self.ok_lines = 0
-        self.line_idx = (self.line_idx + 1) % len(self.level.lines)
+        self._advance_cursor()
 
     def hint_from_scene(self, scene_id: str) -> bool:
         """If Soft scene suggests a higher/matching theme, gently sync level.
@@ -268,6 +324,7 @@ class LevelProgress:
             self.level_idx = want_idx
             self.line_idx = 0
             self.ok_lines = 0
+            self.clear_llm_targets()
             return True
         return False
 

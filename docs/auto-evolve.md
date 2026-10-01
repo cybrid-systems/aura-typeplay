@@ -1,5 +1,16 @@
 # How auto-evolve feels in play
 
+## Soft mutate vs DeepSeek words/copy
+
+| Layer | Owns | Does **not** |
+|-------|------|----------------|
+| **Soft** (`AURA_BIN`, `aura/*.aura`) | Scene AST mutate (`mutate:rebind`), scene id/hue/energy | Typing word lists |
+| **DeepSeek** (host `llm_copy`) | Kid-safe **copy** (title/blurb/art/feedback) + **typing targets** (ASCII words/phrases) | Rewrite Soft `.aura` / mutate AST |
+| **Host** | Applies accepted DeepSeek targets into the typing queue; kid-safe filter only | Gold rewrite of LLM text |
+
+No DeepSeek key / FAIL → keep built-in level word lists (`host/levels.py`).
+
+
 You **just type**. There is no Ctrl+E evolve key.
 
 ## While you play

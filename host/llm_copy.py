@@ -3,6 +3,10 @@
 Default provider: DeepSeek V4.1 Flash (`deepseek-flash`).
 Optional: ``TYPEPLAY_LLM=minimax`` keeps the MiniMax path.
 
+DeepSeek proposes **copy** (title/blurb/art/feedback) AND **typing
+target words** for the current level/theme. Soft alone mutates aura
+AST — this module never writes ``.aura`` files.
+
 Key resolve (never logged) mirrors aura-build style per provider:
   DeepSeek: DEEPSEEK_API_KEY → DEEPSEEK_API_KEY_FILE → env files →
             ~/.config/aura-build/deepseek_api_key
@@ -443,12 +447,16 @@ def _extract_json_obj(text: str) -> dict[str, Any] | None:
 
 def _prompt(scene: Scene, signals: dict) -> str:
     return (
-        "You write kid-safe COPY only for a typing-game scene panel.\n"
+        "You write kid-safe COPY and typing TARGETS for a kids typing game.\n"
         "Do NOT change scene id, hue, or energy — those are fixed by Soft.\n"
         "Return JSON only with keys:\n"
         "  title  (short cheerful English title, ≤6 words)\n"
         "  blurb  (one kind sentence, EN or EN+中文, ≤20 words)\n"
         "  art    (5-7 lines ascii/emoji art matching the scene theme)\n"
+        "  targets (array of 4-8 objects: {text, hint_zh})\n"
+        "    text = ASCII English/pinyin kids can type on a Latin keyboard\n"
+        "    (short words or 2-4 word phrases, lowercase preferred, ≤28 chars)\n"
+        "    hint_zh = optional Chinese gloss (NOT typed)\n"
         f"Locked scene id={scene.id} hue={scene.hue} energy={scene.energy}\n"
         f"Level/theme hints: {json.dumps({k: signals.get(k) for k in ('level_id','theme_scene','accuracy','streak','wpm')})}\n"
         "Rules: friendly animals, nature, space wonder, calm focus, celebration.\n"
@@ -460,18 +468,21 @@ def _prompt(scene: Scene, signals: dict) -> str:
 
 def _multi_prompt(scene: Scene, signals: dict, n: int = 3) -> str:
     return (
-        f"Propose {n} kid-safe typing-game scene COPY variants as JSON only.\n"
-        "Soft already locked scene id/hue/energy — you only invent flavor.\n"
-        'Return: {"candidates":[{title,blurb,art,style,feedback_en,feedback_zh,line_flavor},...]}\n'
+        f"Propose {n} kid-safe typing-game COPY+TARGETS variants as JSON only.\n"
+        "Soft already locked scene id/hue/energy — you only invent flavor + words.\n"
+        'Return: {"candidates":[{title,blurb,art,style,feedback_en,feedback_zh,line_flavor,targets},...]}\n'
         "style: one of gentle|sparkle|party|soft|wonder\n"
         "art: prefer emoji/ascii line art (not long prose paragraphs)\n"
         "line_flavor: short EN hint for the next typing vibe (≤8 words)\n"
         "feedback_en / feedback_zh: encouraging micro lines\n"
+        "targets: 4-8 items {text, hint_zh}; text = ASCII kids typing targets\n"
+        "  (English or pinyin, lowercase preferred, 1-4 words, ≤28 chars each)\n"
+        "  Match the level/theme; easy for ages ~5-10; no punctuation except space/\'-\n"
         f"Locked id={scene.id} hue={scene.hue} energy={scene.energy}\n"
         f"signals={json.dumps({k: signals.get(k) for k in ('accuracy','streak','wpm','rhythm_cv','theme_scene','level_id')})}\n"
         "FORBIDDEN: violence, weapons, death, horror, adult topics.\n"
         "Do not use the standalone words: war, kill, death, blood, fight.\n"
-        "JSON only, no markdown."
+        "JSON only, no markdown. Soft mutates the game world; you only write words/copy."
     )
 
 
@@ -625,6 +636,70 @@ def select_copy(
     return {"title": title, "blurb": blurb, "art": art}, ""
 
 
+
+# ASCII typing targets: letters, digits, space, and a few kid-safe punct.
+_TARGET_OK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 \'\-]{0,27}$")
+
+
+def select_targets(
+    raw: Any,
+    *,
+    max_n: int = 8,
+) -> tuple[list[dict[str, str]], str]:
+    """Filter LLM target words/phrases. Returns (accepted, reject_summary).
+
+    Never invents replacements for rejected text — drops unsafe items only.
+    Soft/aura AST is untouched; these are host typing strings only.
+    """
+    items: list[Any] = []
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        # allow single object or {"targets":[...]}
+        if "targets" in raw:
+            inner = raw.get("targets")
+            items = inner if isinstance(inner, list) else []
+        elif raw.get("text") or raw.get("target"):
+            items = [raw]
+    accepted: list[dict[str, str]] = []
+    rejects = 0
+    seen: set[str] = set()
+    for it in items:
+        if len(accepted) >= max_n:
+            break
+        if isinstance(it, str):
+            text, hint = it.strip(), ""
+        elif isinstance(it, dict):
+            text = str(it.get("text") or it.get("target") or "").strip()
+            hint = str(it.get("hint_zh") or it.get("hint") or "").strip()
+        else:
+            rejects += 1
+            continue
+        if not text or not _TARGET_OK_RE.match(text):
+            rejects += 1
+            continue
+        # normalize internal whitespace; keep case mostly lower for kids
+        text = " ".join(text.split())
+        key = text.lower()
+        if key in seen:
+            continue
+        if kid_safe_hit(text):
+            rejects += 1
+            continue
+        if hint and kid_safe_hit(hint):
+            hint = ""
+        # drop CJK from typed text (hints may be CJK)
+        if any(ord(ch) > 127 for ch in text):
+            rejects += 1
+            continue
+        seen.add(key)
+        accepted.append({"text": text, "hint_zh": hint[:24]})
+    if not accepted:
+        return [], "no_targets" if rejects else "empty_targets"
+    reason = f"ok:{len(accepted)}" + (f"+drop:{rejects}" if rejects else "")
+    return accepted, reason
+
+
 def apply_copy(base: Scene, copy: dict[str, str]) -> Scene:
     return Scene(
         id=base.id,
@@ -739,6 +814,9 @@ def select_best_copy(
             score += 0.4
         if len(chosen["art"].splitlines()) >= 4:
             score += 0.5
+        targets, _twhy = select_targets(raw.get("targets") or raw.get("words") or [])
+        if targets:
+            score += 0.6 + min(0.4, 0.05 * len(targets))
         if score > best_score:
             best_score = score
             best = {
@@ -747,6 +825,7 @@ def select_best_copy(
                 "feedback_en": fe,
                 "feedback_zh": fz,
                 "line_flavor": lf,
+                "targets": targets,
             }
     if best:
         return best, ""
@@ -818,6 +897,13 @@ def continuous_enrich(
 
     blob = json.dumps(chosen, ensure_ascii=False, sort_keys=True)
     _set_status("ok")
+    targets = chosen.get("targets") if isinstance(chosen.get("targets"), list) else []
+    if not targets:
+        # try sibling candidates for words even if this cand had none
+        for raw in cands:
+            targets, _ = select_targets(raw.get("targets") or raw.get("words") or [])
+            if targets:
+                break
     extras.update(
         {
             "content_hash": hashlib.sha1(blob.encode("utf-8")).hexdigest()[:10],
@@ -825,6 +911,7 @@ def continuous_enrich(
             "feedback_en": chosen.get("feedback_en") or "",
             "feedback_zh": chosen.get("feedback_zh") or "",
             "line_flavor": chosen.get("line_flavor") or "",
+            "targets": targets,
             "n_propose": len(cands),
         }
     )

@@ -215,7 +215,7 @@ class StarSpeakPanel(Static):
             self.update(
                 f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
                 f"  [bold #faa]未接 {provider_label()}[/] — export DEEPSEEK_API_KEY 或 deepseek.env\n"
-                "  [dim]Soft 正在 mutate 场景 AST；小星星只负责说话/画画文案[/]"
+                "  [dim]Soft mutate 场景 AST；DeepSeek 只写 copy + 打字单词（不改 .aura）[/]"
             )
             return
         if st == "probing":
@@ -374,7 +374,7 @@ class TypeplayApp(App):
             yield ScenePanel(id="scene")
         mm = "key✓" if has_api_key() else "no-key"
         yield Static(
-            "Auto Soft+LLM · Backspace 退格 · Ctrl+N skip · Ctrl+C quit  ·  "
+            "Soft mutate AST · DeepSeek words/copy · Backspace · Ctrl+N skip · Ctrl+C  ·  "
             f"mode={self.mode} minimax={mm}  ·  错了看黄色大字！",
             id="hint",
         )
@@ -474,7 +474,7 @@ class TypeplayApp(App):
         # Keep status hint fresh with last evolve source
         try:
             self.query_one("#hint", Static).update(
-                "Auto Soft+LLM · Backspace 退格 · Ctrl+N skip · Ctrl+C quit  ·  "
+                "Soft mutate AST · DeepSeek words/copy · Backspace · Ctrl+N skip · Ctrl+C  ·  "
                 f"mode={self.mode}  ·  last={self.scene_source}"
             )
         except Exception:  # noqa: BLE001
@@ -516,6 +516,16 @@ class TypeplayApp(App):
             self._async_zh = snap.feedback_zh
         if snap.line_flavor:
             self._line_flavor = snap.line_flavor
+        # DeepSeek words → typing queue (Soft still owns mutate/AST)
+        raw_targets = list(getattr(snap, "targets", None) or [])
+        if raw_targets and (getattr(snap, "minimax_status", "") or "") == "ok":
+            n = self.progress.offer_llm_targets(
+                raw_targets,
+                source=str(getattr(snap, "llm_provider", "") or "deepseek"),
+                replace=True,
+            )
+            if n and self.typed_len == 0:
+                self.target = self.progress.target_text()
         if self.progress.hint_from_scene(self.scene.id):
             self.target = self.progress.target_text()
             self.typed_len = 0

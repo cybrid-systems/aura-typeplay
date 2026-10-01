@@ -23,3 +23,10 @@ Chinese appears as a **hint** only (`中文 …`).
 
 `observe.json` includes `level_id`, `level_idx`, `theme_scene`. Soft prefers
 `theme_scene` when accuracy is healthy (Soft observe ≠ Hard).
+
+## DeepSeek target words
+
+When DeepSeek is OK, it proposes kid-safe ASCII targets for the current level/theme.
+The host queues them for typing (kid-safe filter only — no gold rewrite).
+If DeepSeek is down or the queue is empty, the built-in level lists above are used.
+Soft mutate does **not** come from these words.
