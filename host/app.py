@@ -280,7 +280,13 @@ class TypeplayApp(App):
         self._refresh_all()
 
     def on_key(self, event: events.Key) -> None:
-        if event.character is None or event.is_control:
+        # Textual versions differ: some have is_control, newer use is_printable.
+        if getattr(event, "is_control", False):
+            return
+        if hasattr(event, "is_printable") and not event.is_printable:
+            return
+        # Named keys (ctrl+n, etc.) have character None; bindings handle those.
+        if event.character is None or (event.key and event.key.startswith("ctrl+")):
             return
         ch = event.character
         if self.typed_len >= len(self.target):
