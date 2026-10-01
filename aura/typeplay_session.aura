@@ -1,15 +1,46 @@
-; aura-typeplay — session score surface (stub)
-; Soft will bind these later. Host already tracks score in Python for v0.
+; aura-typeplay — session score surface (Soft product)
+; Host writes typing signals to observe.json; Soft reads (no Soft lang hacks).
 ; AURA_BIN=/workspace/aura-grok/build/aura
-;
-; Intended Soft API (documented sockets — not implemented in Soft yet):
-;   typeplay:session-score  → hash accuracy wpm streak best_streak chars_done
-;   typeplay:reset-session  → clear counters
-;
-; Three layers: Soft runtime / this product / no Soft language hacks.
-(export typeplay-session-stub)
+; Soft observe ≠ Hard.
+(export
+  typeplay-socket-dir
+  typeplay-observe-path
+  typeplay-scene-path
+  typeplay-read-signals
+  typeplay-session-score)
 
-(define (typeplay-session-stub)
-  (hash "status" "stub"
-        "product" "aura-typeplay"
-        "note" "host metrics live; Soft bind pending"))
+(require "std/io" all:)
+
+(define (typeplay-socket-dir)
+  (let ((d (getenv "TYPEPLAY_SOCKET_DIR")))
+    (if (string? d) d "/tmp/aura-typeplay")))
+
+(define (typeplay-observe-path)
+  (string-append (typeplay-socket-dir) "/observe.json"))
+
+(define (typeplay-scene-path)
+  (string-append (typeplay-socket-dir) "/scene.json"))
+
+(define (typeplay-num h key default)
+  (let ((v (hash-ref h key default)))
+    (if (number? v) v default)))
+
+(define (typeplay-read-signals)
+  (let ((p (typeplay-observe-path)))
+    (if (file-exists? p)
+      (let ((h (json-parse (read-file p))))
+        (if (hash? h) h (hash)))
+      (hash))))
+
+(define (typeplay-session-score)
+  (let ((h (typeplay-read-signals)))
+    (hash "accuracy" (typeplay-num h "accuracy" 1.0)
+          "wpm" (typeplay-num h "wpm" 0.0)
+          "streak" (typeplay-num h "streak" 0)
+          "best_streak" (typeplay-num h "best_streak" 0)
+          "chars_done" (typeplay-num h "chars_done" 0)
+          "wrong" (typeplay-num h "wrong" 0)
+          "rhythm_cv" (typeplay-num h "rhythm_cv" 0.0)
+          "soft_observe_ne_hard" #t
+          "kernel" "aura"
+          "product" "aura-typeplay")))

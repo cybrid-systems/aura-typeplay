@@ -1,10 +1,12 @@
-# aura-typeplay — kids typing TUI + Soft observe/evolve hooks
-# Soft wire-up later: AURA_BIN=/workspace/aura-grok/build/aura
+# aura-typeplay — kids typing TUI + Soft observe/evolve
+# Soft binary ONLY: AURA_BIN=/workspace/aura-grok/build/aura
 AURA_BIN ?= /workspace/aura-grok/build/aura
 PYTHON   ?= .venv/bin/python
 PIP      ?= .venv/bin/pip
+export AURA_BIN
+export AURA_SANDBOX ?= off
 
-.PHONY: venv install run offline minimax doctor clean
+.PHONY: venv install run offline soft minimax doctor smoke-soft clean
 
 venv:
 	python3 -m venv .venv
@@ -12,21 +14,27 @@ venv:
 
 install: venv
 
-# Offline: rule-based scene swap (no MiniMax)
 run offline: offline
 
 offline:
 	TYPEPLAY_MODE=offline $(PYTHON) -m host.app
 
-# MiniMax propose scenes when MINIMAX_API_KEY is set
+# Soft serve observe-steer (falls back offline if Soft down)
+soft:
+	TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $(PYTHON) -m host.app
+
 minimax:
 	TYPEPLAY_MODE=minimax $(PYTHON) -m host.app
 
 doctor:
 	@echo "AURA_BIN=$(AURA_BIN)"
-	@test -x "$(AURA_BIN)" && echo "Soft binary: ok" || echo "Soft binary: missing (v0 TUI runs without Soft)"
+	@test -x "$(AURA_BIN)" && echo "Soft binary: ok" || echo "Soft binary: MISSING"
 	@$(PYTHON) -c "import textual; print('textual', textual.__version__)"
-	@test -n "$$MINIMAX_API_KEY" && echo "MINIMAX_API_KEY: set" || echo "MINIMAX_API_KEY: unset (offline scenes)"
+	@test -n "$$MINIMAX_API_KEY" && echo "MINIMAX_API_KEY: set" || echo "MINIMAX_API_KEY: unset"
+	@TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $(PYTHON) -c "from host.soft_bridge import doctor; import json; print(json.dumps(doctor(), indent=2))"
+
+smoke-soft:
+	TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) AURA_SANDBOX=off $(PYTHON) scripts/smoke_soft.py
 
 clean:
 	rm -rf .venv __pycache__ host/__pycache__ .pytest_cache

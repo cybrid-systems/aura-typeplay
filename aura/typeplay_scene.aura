@@ -1,19 +1,83 @@
-; aura-typeplay — scene mutate hooks (stub)
-; MiniMax proposes scenes; Soft/host select — never gold hardcoded fixes.
-; Host offline path: rule_based_scene(signals) in host/scenes.py
-; Host minimax path: host/minimax_scene.py propose → scene_from_proposal
-;
-; Intended Soft flow:
-;   1. read observe signals
-;   2. (optional) ask MiniMax via host for N proposals
-;   3. mutate:rebind / select-best among candidates
-;   4. write scene.json for TUI to pick up
-;
+; aura-typeplay — scene evolve (Soft product brain)
+; Typing signals primary; Soft query:* gate modulates energy / calm bias.
+; MiniMax propose stays host-side (optional); Soft/host select — no gold fixes.
 ; AURA_BIN=/workspace/aura-grok/build/aura
-(export typeplay-scene-stub)
+(export
+  typeplay-pick-scene
+  typeplay-write-scene
+  run-typeplay-evolve)
 
-(define (typeplay-scene-stub)
-  (hash "status" "stub"
-        "select" "soft-or-host"
-        "propose" "minimax-or-rule-based"
-        "forbid" "gold-hardcoded-fixes"))
+(require "typeplay_session" all:)
+(require "typeplay_observe" all:)
+(require "std/io" all:)
+
+(define (typeplay-scene-meta id)
+  (cond
+    ((equal? id "party")
+     (hash "id" "party" "title" "Streak Party!" "hue" "yellow" "energy" 0.95))
+    ((equal? id "focus")
+     (hash "id" "focus" "title" "Focus Cave" "hue" "white" "energy" 0.2))
+    ((equal? id "ocean")
+     (hash "id" "ocean" "title" "Calm Ocean" "hue" "blue" "energy" 0.35))
+    ((equal? id "space")
+     (hash "id" "space" "title" "Star Garden" "hue" "magenta" "energy" 0.7))
+    ((equal? id "meadow")
+     (hash "id" "meadow" "title" "Sunny Meadow" "hue" "green" "energy" 0.4))
+    (#t (hash "id" "forest" "title" "Quiet Forest" "hue" "green" "energy" 0.3))))
+
+(define (typeplay-pick-scene bundle)
+  (let* ((sig (hash-ref bundle "signals" (hash)))
+         (gate-h (hash-ref bundle "gate" (hash)))
+         (gate (hash-ref gate-h "gate" "green"))
+         (storm (hash-ref gate-h "storm_red" #f))
+         (acc (hash-ref sig "accuracy" 1.0))
+         (wpm (hash-ref sig "wpm" 0.0))
+         (streak (hash-ref sig "streak" 0))
+         (rhythm (hash-ref sig "rhythm_cv" 0.0))
+         ; Soft storm → calm bias (Soft observe ≠ Hard). Typing still primary.
+         (id (cond
+               (storm "focus")
+               ((>= streak 20) "party")
+               ((< acc 0.7) "focus")
+               ((and (> rhythm 0.8) (>= acc 0.85)) "ocean")
+               ((and (>= wpm 25) (>= acc 0.9)) "space")
+               ((and (>= acc 0.95) (>= streak 10)) "meadow")
+               ((equal? gate "amber") "ocean")
+               (#t "forest")))
+         (meta (typeplay-scene-meta id))
+         (base-e (hash-ref meta "energy" 0.5))
+         (energy (cond
+                   ((equal? gate "red") (* base-e 0.5))
+                   ((equal? gate "amber") (* base-e 0.8))
+                   (#t base-e))))
+    (hash "id" (hash-ref meta "id")
+          "title" (hash-ref meta "title")
+          "hue" (hash-ref meta "hue")
+          "energy" energy
+          "source" "soft"
+          "gate" gate
+          "storm_red" storm
+          "reasons" (hash-ref gate-h "reasons" (list))
+          "soft_observe_ne_hard" #t
+          "accuracy" acc
+          "wpm" wpm
+          "streak" streak
+          "rhythm_cv" rhythm
+          "kernel" "aura")))
+
+(define (typeplay-write-scene scene)
+  (let ((p (typeplay-scene-path)))
+    (write-file p (json-encode scene))
+    scene))
+
+(define (run-typeplay-evolve)
+  (let* ((bundle (typeplay-observe-bundle))
+         (scene (typeplay-pick-scene bundle))
+         (_ (typeplay-write-scene scene)))
+    (display "TYPEPLAY_EVOLVE ok=true id=")
+    (display (hash-ref scene "id"))
+    (display " gate=")
+    (display (hash-ref scene "gate"))
+    (display " soft_observe_ne_hard=true")
+    (newline)
+    scene))

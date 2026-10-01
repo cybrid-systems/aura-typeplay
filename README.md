@@ -22,24 +22,25 @@ See [`docs/three-layers.md`](docs/three-layers.md) and [`aura/INTEGRATION.md`](a
 
 ```bash
 cd /workspace/aura-typeplay   # or clone
-make venv                     # or: ./scripts/run.sh (auto-venv)
-make offline                  # rule-based scene swap, no MiniMax
-# or
-./scripts/run.sh
+make venv
+make offline                  # rule-based scene swap (no Soft)
+make soft                     # Soft serve observe-steer → scene (offline fallback if Soft down)
+make doctor                   # Soft binary + evolve smoke
+make smoke-soft               # non-interactive Soft oneshot + serve smoke
 ```
 
-With MiniMax scene propose:
+Soft binary **only**:
+
+```bash
+export AURA_BIN=/workspace/aura-grok/build/aura
+export AURA_SANDBOX=off
+```
+
+MiniMax propose (host thin; Soft/host select):
 
 ```bash
 export MINIMAX_API_KEY=...
 make minimax
-```
-
-Soft wire-up (later; v0 TUI runs without Soft):
-
-```bash
-export AURA_BIN=/workspace/aura-grok/build/aura
-make doctor
 ```
 
 ### Keys
@@ -56,18 +57,19 @@ make doctor
 ```
 host/               Python Textual TUI (thin host)
   app.py            main UI — target, metrics, scene panel
+  soft_bridge.py    Soft --serve / oneshot bridge (thin)
   metrics.py        accuracy / WPM / streak / rhythm_cv
-  scenes.py         ANSI scenes + offline rule-based picker
+  scenes.py         ANSI scenes + offline + apply Soft scene
   minimax_scene.py  MiniMax propose (env key); Soft/host select
   lines.py          kid-friendly target lines
-aura/               Soft product stubs (.aura) + integration notes
-  typeplay_*.aura   session / observe / scene hooks (stubs)
+aura/               Soft product brain (.aura) + integration notes
+  typeplay_*.aura   session / observe / scene evolve (Soft)
   INTEGRATION.md    sockets Soft will serve later
 scripts/run.sh      offline-by-default launcher
 Makefile            venv / offline / minimax / doctor
 ```
 
-## Soft sockets (v0 host drops JSON)
+## Soft sockets (host ↔ Soft JSON)
 
 Default dir: `/tmp/aura-typeplay` (`TYPEPLAY_SOCKET_DIR`):
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Run typeplay TUI. Offline by default; set TYPEPLAY_MODE=minimax + MINIMAX_API_KEY for LLM scenes.
-# Soft later: export AURA_BIN=/workspace/aura-grok/build/aura
+# Run typeplay TUI. TYPEPLAY_MODE=offline|soft|minimax
+# Soft: AURA_BIN=/workspace/aura-grok/build/aura
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -10,4 +10,5 @@ if [[ ! -x .venv/bin/python ]]; then
 fi
 export TYPEPLAY_MODE="${TYPEPLAY_MODE:-offline}"
 export AURA_BIN="${AURA_BIN:-/workspace/aura-grok/build/aura}"
+export AURA_SANDBOX="${AURA_SANDBOX:-off}"
 exec .venv/bin/python -m host.app "$@"

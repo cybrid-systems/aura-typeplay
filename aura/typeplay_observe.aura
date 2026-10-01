@@ -1,20 +1,122 @@
-; aura-typeplay — observe signals (stub)
-; Host writes /tmp/aura-typeplay/observe.json (or $TYPEPLAY_SOCKET_DIR).
-; Soft should read that socket (or a future std/io bridge), not invent gold.
-;
-; Signals:
-;   accuracy  float 0..1
-;   wpm       float
-;   streak    int
-;   best_streak int
-;   chars_done  int
-;   wrong     int
-;   rhythm_cv float  (inter-key interval CV; lower = steadier)
-;
-; Soft observe → fitness for scene select-best. No Soft language hacks here.
-(export typeplay-observe-stub)
+; aura-typeplay — Soft observe (typing signals + existing Aura query:* faces)
+; Prefer landed query:* faces — no new Soft counters / key renames.
+; Soft observe ≠ Hard proof: guidance only for scene energy / calm.
+; AURA_BIN=/workspace/aura-grok/build/aura
+(export
+  typeplay-query-keys
+  typeplay-sample-soft
+  typeplay-soft-gate
+  typeplay-observe-bundle)
 
-(define (typeplay-observe-stub)
-  (hash "status" "stub"
-        "socket" "observe.json"
-        "signals" (list "accuracy" "wpm" "streak" "rhythm_cv")))
+(require "typeplay_session" all:)
+(require "std/hash" all:)
+
+; Exact faces Soft can invoke today (same set aura-build samples — do not invent).
+(define (typeplay-query-keys)
+  (list "query:incremental-relower-stats"
+        "query:dirty-cascade-stats"
+        "query:soa-dirty-stats"
+        "query:type-linear-commit-health"))
+
+(define (typeplay-observe-num h key)
+  (let ((v (hash-ref h key -1)))
+    (if (number? v) v -1)))
+
+(define (typeplay-pos n)
+  (if (and (number? n) (>= n 0)) n 0))
+
+(define (typeplay-sample-one facade)
+  (let* ((h (engine:metrics facade))
+         (ok (and (hash? h) (> (length (hash-keys h)) 0)))
+         (nkeys (if (hash? h) (length (hash-keys h)) 0)))
+    (cond
+      ((equal? facade "query:incremental-relower-stats")
+       (hash "facade" facade
+             "ok" ok
+             "nkeys" nkeys
+             "partial_forced_full_by_impact_total"
+             (typeplay-observe-num h "partial_forced_full_by_impact_total")
+             "incremental_relower_cold_miss_total"
+             (typeplay-observe-num h "incremental_relower_cold_miss_total")))
+      ((equal? facade "query:dirty-cascade-stats")
+       (hash "facade" facade
+             "ok" ok
+             "nkeys" nkeys
+             "dual-dep-graph-parity-fail-total"
+             (typeplay-observe-num h "dual-dep-graph-parity-fail-total")))
+      ((equal? facade "query:soa-dirty-stats")
+       (hash "facade" facade
+             "ok" ok
+             "nkeys" nkeys
+             "soa-dirty-desync-force-full-total"
+             (typeplay-observe-num h "soa-dirty-desync-force-full-total")))
+      ((equal? facade "query:type-linear-commit-health")
+       (hash "facade" facade
+             "ok" ok
+             "nkeys" nkeys
+             "readiness-bp" (typeplay-observe-num h "readiness-bp")))
+      (#t (hash "facade" facade "ok" ok "nkeys" nkeys)))))
+
+(define (typeplay-sample-soft)
+  (let loop ((ks (typeplay-query-keys)) (acc (list)))
+    (if (null? ks)
+      (hash "ok" #t
+            "samples" (reverse acc)
+            "soft_observe_ne_hard" #t
+            "note" "Soft observe guidance only; not Hard proof"
+            "kernel" "aura")
+      (loop (cdr ks) (cons (typeplay-sample-one (car ks)) acc)))))
+
+(define (typeplay-find-sample samples facade)
+  (let loop ((xs samples))
+    (cond
+      ((null? xs) (hash))
+      ((equal? (hash-ref (car xs) "facade" "") facade) (car xs))
+      (#t (loop (cdr xs))))))
+
+(define (typeplay-soft-gate sample-bundle)
+  ; Soft storm from query:* only. Typing accuracy_red ≠ Soft storm.
+  (let* ((samples (hash-ref sample-bundle "samples" (list)))
+         (rel (typeplay-find-sample samples "query:incremental-relower-stats"))
+         (cas (typeplay-find-sample samples "query:dirty-cascade-stats"))
+         (soa (typeplay-find-sample samples "query:soa-dirty-stats"))
+         (tl (typeplay-find-sample samples "query:type-linear-commit-health"))
+         (force-abs (typeplay-pos (hash-ref rel "partial_forced_full_by_impact_total" 0)))
+         (cold-abs (typeplay-pos (hash-ref rel "incremental_relower_cold_miss_total" 0)))
+         (parity-abs (typeplay-pos (hash-ref cas "dual-dep-graph-parity-fail-total" 0)))
+         (soa-ff-abs (typeplay-pos (hash-ref soa "soa-dirty-desync-force-full-total" 0)))
+         (ready-bp (hash-ref tl "readiness-bp" -1))
+         (ready-red (and (number? ready-bp) (>= ready-bp 0) (< ready-bp 5000)))
+         (storm-red (or (> parity-abs 0) (> soa-ff-abs 0) ready-red))
+         (gate (cond
+                 (storm-red "red")
+                 ((or (> force-abs 0) (> cold-abs 0)) "amber")
+                 (#t "green")))
+         (reasons (list)))
+    (if (> parity-abs 0) (set! reasons (cons "cascade_parity_fail" reasons)) #t)
+    (if (> soa-ff-abs 0) (set! reasons (cons "soa_desync_force_full" reasons)) #t)
+    (if ready-red (set! reasons (cons "type_linear_readiness_low" reasons)) #t)
+    (if (and (equal? gate "amber") (or (> force-abs 0) (> cold-abs 0)))
+      (set! reasons (cons "force_full_or_cold_lifetime" reasons))
+      #t)
+    (hash "gate" gate
+          "storm_red" storm-red
+          "reasons" (reverse reasons)
+          "soft_observe_ne_hard" #t
+          "note" "Soft observe ≠ Hard; guidance only")))
+
+(define (typeplay-observe-bundle)
+  (let* ((signals (typeplay-session-score))
+         (sample (typeplay-sample-soft))
+         (gate (typeplay-soft-gate sample))
+         ; Typing accuracy is transform feedback — not Soft storm.
+         (acc (hash-ref signals "accuracy" 1.0))
+         (acc-ok (and (number? acc) (>= acc 0.7)))
+         (acc-sig (not acc-ok)))
+    (hash "signals" signals
+          "sample" sample
+          "gate" gate
+          "accuracy_ok" acc-ok
+          "accuracy_signal" acc-sig
+          "soft_observe_ne_hard" #t
+          "kernel" "aura")))

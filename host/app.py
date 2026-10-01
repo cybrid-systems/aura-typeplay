@@ -1,7 +1,7 @@
-"""Typeplay Textual TUI — target line, keystrokes, live metrics, evolving scene.
+"""Typeplay Textual TUI — Soft observe-steer scene evolve; offline fallback.
 
-v0 runs without Soft: local metrics → rule-based (or MiniMax) scene.
-Later wire-up: AURA_BIN=/workspace/aura-grok/build/aura
+Soft binary: AURA_BIN=/workspace/aura-grok/build/aura
+Product brain: aura/*.aura — Soft observe ≠ Hard.
 """
 
 from __future__ import annotations
@@ -11,17 +11,17 @@ from pathlib import Path
 
 from textual import events
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal
 from textual.widgets import Footer, Header, Static
 
 from host.lines import next_line
 from host.metrics import SessionScore
 from host.minimax_scene import propose_or_none
-from host.scenes import Scene, rule_based_scene, scene_from_proposal
+from host.scenes import Scene, apply_soft_scene, rule_based_scene, scene_from_proposal
+from host import soft_bridge
 
-# Soft binary path for later wire-up (v0 does not invoke Soft).
-AURA_BIN = os.environ.get("AURA_BIN", "/workspace/aura-grok/build/aura")
-SOCKET_DIR = Path(os.environ.get("TYPEPLAY_SOCKET_DIR", "/tmp/aura-typeplay"))
+AURA_BIN = soft_bridge.resolve_aura_bin()
+SOCKET_DIR = soft_bridge.socket_dir()
 
 
 class MetricsPanel(Static):
@@ -46,7 +46,6 @@ class TargetPanel(Static):
         rest = target[typed_len:]
         caret = "[blink]▍[/]"
         if last_ok is False and typed_len > 0:
-            # flash last wrong char
             done = target[: typed_len - 1] + f"[red bold]{target[typed_len - 1]}[/]"
         self.update(
             f"[b]Type this:[/]\n\n"
@@ -70,7 +69,7 @@ class ScenePanel(Static):
 
 
 class TypeplayApp(App):
-    """Kids typing host — Soft observe hooks documented, not required for v0."""
+    """Kids typing host — Soft serve observe-steer when mode=soft."""
 
     CSS = """
     Screen { layout: vertical; }
@@ -92,6 +91,7 @@ class TypeplayApp(App):
 
     def __init__(self) -> None:
         super().__init__()
+        self.mode = os.environ.get("TYPEPLAY_MODE", "offline").lower()
         self.score = SessionScore()
         self.line_index = 0
         self.target = next_line(0)
@@ -99,7 +99,8 @@ class TypeplayApp(App):
         self.last_ok: bool | None = None
         self.scene: Scene = rule_based_scene(self.score.observe_signals())
         self.scene_source = "offline"
-        self._evolve_every = 8  # chars between auto-evolve attempts
+        self._evolve_every = 8
+        self._soft: soft_bridge.SoftServe | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -107,17 +108,28 @@ class TypeplayApp(App):
         with Horizontal(id="main"):
             yield TargetPanel(id="target")
             yield ScenePanel(id="scene")
+        soft_note = "serve" if self._soft and self._soft.alive else self.mode
         yield Static(
-            "Ctrl+N skip · Ctrl+E evolve scene · Ctrl+C quit  ·  "
-            f"mode={os.environ.get('TYPEPLAY_MODE', 'offline')}  ·  "
+            "Ctrl+N skip · Ctrl+E evolve · Ctrl+C quit  ·  "
+            f"mode={self.mode}  ·  soft={soft_note}  ·  "
             f"AURA_BIN={AURA_BIN}",
             id="hint",
         )
         yield Footer()
 
     def on_mount(self) -> None:
+        if self.mode == "soft":
+            self._soft = soft_bridge.SoftServe.start()
+            if not self._soft.alive:
+                # Soft down → keep running offline; hint shows fallback.
+                self.scene_source = f"offline(soft_down:{self._soft.last_error})"
         self._refresh_all()
-        self._write_observe_stub()
+        self._push_observe()
+
+    def on_unmount(self) -> None:
+        if self._soft is not None:
+            self._soft.stop()
+            self._soft = None
 
     def _refresh_all(self) -> None:
         self.query_one("#metrics", MetricsPanel).show(self.score)
@@ -132,49 +144,51 @@ class TypeplayApp(App):
         self.typed_len = 0
         self.last_ok = None
 
+    def _push_observe(self, signals: dict | None = None) -> None:
+        try:
+            soft_bridge.write_observe(signals or self.score.observe_signals())
+        except OSError:
+            pass
+
+    def _apply_offline(self, signals: dict) -> None:
+        self.scene = rule_based_scene(signals)
+        self.scene_source = "offline"
+
     def _maybe_evolve(self, force: bool = False) -> None:
         if not force and self.score.chars_done % self._evolve_every != 0:
             return
         signals = self.score.observe_signals()
-        self._write_observe_stub(signals)
-        proposal = propose_or_none(signals)
-        if proposal:
-            scene = scene_from_proposal(proposal)
-            if scene:
-                self.scene = scene
-                self.scene_source = "minimax"
+        self._push_observe(signals)
+
+        # Soft mode: Soft product brain steers scene.
+        if self.mode == "soft":
+            got = soft_bridge.evolve_with_soft(signals, serve=self._soft)
+            applied = apply_soft_scene(got.get("scene"), signals)
+            if got.get("ok") and applied:
+                self.scene, self.scene_source = applied
+                via = got.get("via") or "soft"
+                self.scene_source = f"soft/{via}"
                 self._refresh_all()
                 return
-        self.scene = rule_based_scene(signals)
-        self.scene_source = "offline"
+            # Soft down / fail → offline fallback
+            self._apply_offline(signals)
+            self.scene_source = f"offline(soft_fallback:{got.get('via')})"
+            self._refresh_all()
+            return
+
+        # MiniMax propose (host thin); Soft/host select — no gold fixes.
+        if self.mode == "minimax":
+            proposal = propose_or_none(signals)
+            if proposal:
+                scene = scene_from_proposal(proposal)
+                if scene:
+                    self.scene = scene
+                    self.scene_source = "minimax"
+                    self._refresh_all()
+                    return
+
+        self._apply_offline(signals)
         self._refresh_all()
-
-    def _write_observe_stub(self, signals: dict | None = None) -> None:
-        """Documented socket Soft will serve later — thin JSON drop for v0."""
-        try:
-            SOCKET_DIR.mkdir(parents=True, exist_ok=True)
-            payload = signals or self.score.observe_signals()
-            path = SOCKET_DIR / "observe.json"
-            import json
-
-            path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
-            scene_path = SOCKET_DIR / "scene.json"
-            scene_path.write_text(
-                json.dumps(
-                    {
-                        "id": self.scene.id,
-                        "title": self.scene.title,
-                        "hue": self.scene.hue,
-                        "energy": self.scene.energy,
-                        "source": self.scene_source,
-                    },
-                    indent=2,
-                )
-                + "\n",
-                encoding="utf-8",
-            )
-        except OSError:
-            pass
 
     def on_key(self, event: events.Key) -> None:
         if event.character is None or event.is_control:
@@ -203,6 +217,9 @@ class TypeplayApp(App):
         self._maybe_evolve(force=True)
 
     def action_quit(self) -> None:
+        if self._soft is not None:
+            self._soft.stop()
+            self._soft = None
         self.exit()
 
 
