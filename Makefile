@@ -45,16 +45,17 @@ offline: ensure-venv
 soft: ensure-venv
 	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY -m host.app
 
-# Soft/host select scene id; MiniMax proposes title/blurb/art (needs MINIMAX_API_KEY)
+# Soft/host select scene id; MiniMax proposes title/blurb/art (KEY / KEY_FILE / aura-build env)
 minimax: ensure-venv
-	@test -n "$$MINIMAX_API_KEY" || (echo "MINIMAX_API_KEY unset — will use rule-based copy"; true)
+	@PY=$$($(PY_SH)); $$PY -c "from host.minimax_scene import has_api_key; import sys; sys.exit(0 if has_api_key() else 1)" \
+	  || (echo "MiniMax key not found (MINIMAX_API_KEY / KEY_FILE / aura-build minimax.env) — rule-based copy"; true)
 	@PY=$$($(PY_SH)); TYPEPLAY_MODE=minimax AURA_BIN=$(AURA_BIN) $$PY -m host.app
 
 doctor: ensure-venv
 	@echo "AURA_BIN=$(AURA_BIN)"
 	@test -x "$(AURA_BIN)" && echo "Soft binary: ok" || echo "Soft binary: MISSING"
 	@PY=$$($(PY_SH)); $$PY -c "import textual; print('textual', textual.__version__)"
-	@test -n "$$MINIMAX_API_KEY" && echo "MINIMAX_API_KEY: set" || echo "MINIMAX_API_KEY: unset"
+	@PY=$$($(PY_SH)); $$PY -c "from host.minimax_scene import has_api_key; print('MiniMax key:' , 'resolved' if has_api_key() else 'missing')"
 	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY -c "from host.soft_bridge import doctor; import json; print(json.dumps(doctor(), indent=2))"
 
 smoke-soft: ensure-venv

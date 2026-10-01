@@ -9,7 +9,7 @@ You **just type**. There is no Ctrl+E evolve key.
 2. **Background Soft chat** (every ~5s, and sooner after bursts of keys): Soft
    **multi-proposes** scene candidates (`focus`…`party`) and **select-best** from
    accuracy / rhythm / streak / theme. Soft owns `id` / `hue` / `energy` / style knobs.
-3. **Background MiniMax** (when `MINIMAX_API_KEY` is set): multi-proposes scene
+3. **Background MiniMax** (when a MiniMax key is resolved (env / KEY_FILE / aura-build `minimax.env`)): multi-proposes scene
    **copy** (title / blurb / ASCII art), style flavor, and bilingual feedback /
    next-line vibe. Host thin **select-best** among candidates (kid-safe filter —
    no gold rewrite of LLM text). Soft params stay locked.
@@ -40,7 +40,7 @@ disable MiniMax during `make soft`.
 | **MiniMax** | 为 Soft 锁定的场景 **写文案**：标题、简介、ASCII/emoji 画、中英鼓励话、下一句味道 | 「🌟 小星星说」条；场景徽章「🎨 AI 画画」；标题/简介/画会换 |
 | **本机（无）** | 每个按键的表情反馈、打错时的黄色大字提示 | 粉框表情区；打字区闪烁 `>>> X <<<` |
 
-没有 `MINIMAX_API_KEY` 时：小星星条会提示等待钥匙，场景用内置图库文案（offline）。
+没有可用 MiniMax 密钥时：小星星条会提示等待钥匙，场景用内置图库文案（offline）。
 
 ## Typing feel
 

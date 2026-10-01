@@ -41,7 +41,12 @@ export AURA_BIN=/workspace/aura-grok/build/aura
 MiniMax propose (host thin; Soft/host select) — see below:
 
 ```bash
+# either export the key:
 export MINIMAX_API_KEY=...
+# or share aura-build's env (recommended on this box):
+#   ~/.config/aura-build/minimax.env  (+ MINIMAX_API_KEY_FILE)
+# optional typeplay override:
+#   ~/.config/aura-typeplay/minimax.env
 make minimax
 ```
 
@@ -78,12 +83,15 @@ select-best accepts or rejects (content filter); no gold rewrite of LLM copy.
 No key / reject → library rule-based copy.
 
 ```bash
-export MINIMAX_API_KEY=...          # required for live propose
+# Key resolution (same spirit as aura-build; never print the secret):
+#   1) export MINIMAX_API_KEY=...
+#   2) export MINIMAX_API_KEY_FILE=~/.config/aura-build/minimax_api_key
+#   3) share ~/.config/aura-build/minimax.env  (or ~/.config/aura-typeplay/minimax.env)
 # optional: MINIMAX_BASE_URL=https://api.minimaxi.com/v1
 # optional: MINIMAX_MODEL=MiniMax-M3
 make minimax                        # Soft/host select id → MiniMax copy
 # Soft mode + copy: TYPEPLAY_MINIMAX_COPY=1 make soft
-make smoke-minimax-copy             # filter smoke (+ live if key set)
+make smoke-minimax-copy             # filter smoke (+ live if key resolvable)
 ```
 
 ## Soft live-mutate (Aura-native)

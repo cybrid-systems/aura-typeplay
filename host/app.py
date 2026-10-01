@@ -168,7 +168,11 @@ def minimax_status_chip(
     if st == "probing":
         return "[bold black on #ffdd66] MiniMax probing… [/]"
     if st == "fail":
-        short = (err or "error")[:40]
+        e = (err or "").strip()
+        if "401" in e or "403" in e or "密钥无效" in e:
+            short = "密钥无效或未加载"
+        else:
+            short = (e or "error")[:36]
         return f"[bold white on #cc3344] MiniMax FAIL ({short}) [/]"
     return "[bold white on #555577] MiniMax 未接 KEY [/]"
 
@@ -194,7 +198,7 @@ class StarSpeakPanel(Static):
         if st == "no_key":
             self.update(
                 f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
-                "  [bold #faa]未接 MiniMax[/] — 设置 MINIMAX_API_KEY 后这里会刷新文案\n"
+                "  [bold #faa]未接 MiniMax[/] — export KEY 或共用 ~/.config/aura-build/minimax.env\n"
                 "  [dim]Soft 正在 mutate 场景 AST；小星星只负责说话/画画文案[/]"
             )
             return
@@ -205,12 +209,18 @@ class StarSpeakPanel(Static):
             )
             return
         if st == "fail":
+            e = (mm_error or "").strip()
+            if "401" in e or "403" in e or "密钥无效" in e:
+                detail = "密钥无效或未加载 — 检查 KEY / aura-build minimax.env"
+            else:
+                detail = e or "unknown"
             self.update(
                 f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
-                f"  [red]API 失败[/] {mm_error or 'unknown'} — Soft 场景仍由 mutate 驱动\n"
+                f"  [red]API 失败[/] {detail} — Soft 场景仍由 mutate 驱动\n"
                 f"  [dim]上次 Soft 鼓励：[/] [cyan]{zh or '…'}[/]  [dim]{en or ''}[/]"
             )
             return
+
         # ok — visibly refreshed copy
         zh_line = zh or "…"
         en_line = en or "…"

@@ -5,10 +5,17 @@ MiniMax only proposes kid-safe title / blurb / ASCII art flavor for the
 host never gold-hardcodes overrides of accepted LLM copy (unsafe fields
 dropped; Soft/library art may fill if LLM art alone is filtered).
 
-Env:
-  MINIMAX_API_KEY   required for live propose
-  MINIMAX_BASE_URL  optional (default https://api.minimaxi.com/v1)
-  MINIMAX_MODEL     optional (default MiniMax-M3)
+Key resolution (never logged):
+  1. MINIMAX_API_KEY env
+  2. MINIMAX_API_KEY_FILE env (file contents)
+  3. env file: TYPEPLAY_MINIMAX_ENV / MINIMAX_ENV_FILE /
+     ~/.config/aura-typeplay/minimax.env /
+     AURA_BUILD_MINIMAX_ENV / ~/.config/aura-build/minimax.env
+     → MINIMAX_API_KEY or MINIMAX_API_KEY_FILE from that file
+  4. ~/.config/aura-build/minimax_api_key
+
+Also: MINIMAX_BASE_URL (default https://api.minimaxi.com/v1),
+      MINIMAX_MODEL (default MiniMax-M3).
 """
 
 from __future__ import annotations
@@ -20,12 +27,16 @@ import re
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Any
 
 from host.scenes import SCENES, Scene
 
 DEFAULT_BASE = "https://api.minimaxi.com/v1"
 DEFAULT_MODEL = "MiniMax-M3"
+DEFAULT_AURA_BUILD_ENV = Path.home() / ".config" / "aura-build" / "minimax.env"
+DEFAULT_AURA_BUILD_KEY = Path.home() / ".config" / "aura-build" / "minimax_api_key"
+DEFAULT_TYPEPLAY_ENV = Path.home() / ".config" / "aura-typeplay" / "minimax.env"
 
 # Word-boundary blocks — avoid false positives (war⊂warm, sex⊂next, die⊂dier…).
 _BLOCK_RE = re.compile(
@@ -37,9 +48,128 @@ _BLOCK_RE = re.compile(
     r")(?![a-z])"
 )
 
+_HTTP_401_HINT = "http:401:密钥无效或未加载"
+
+
+def _sanitize_api_key(raw: str | None) -> str:
+    """Strip whitespace/newlines and accidental ``Bearer `` prefix."""
+    if not raw:
+        return ""
+    key = str(raw).strip().strip("\ufeff")
+    if key.lower().startswith("bearer "):
+        key = key[7:].strip()
+    # collapse embedded newlines from key files
+    key = "".join(key.split())
+    return key
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        if not path.is_file():
+            return out
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"').strip("'")
+    except OSError:
+        return {}
+    return out
+
+
+def _candidate_env_files(environ: dict[str, str]) -> list[Path]:
+    """Ordered env-file candidates (typeplay first, then aura-build)."""
+    paths: list[Path] = []
+    for key in (
+        "TYPEPLAY_MINIMAX_ENV",
+        "MINIMAX_ENV_FILE",
+        "AURA_BUILD_MINIMAX_ENV",
+    ):
+        raw = (environ.get(key) or "").strip()
+        if raw:
+            paths.append(Path(raw).expanduser())
+    paths.append(DEFAULT_TYPEPLAY_ENV)
+    paths.append(DEFAULT_AURA_BUILD_ENV)
+    # de-dupe preserving order
+    seen: set[str] = set()
+    uniq: list[Path] = []
+    for p in paths:
+        s = str(p)
+        if s in seen:
+            continue
+        seen.add(s)
+        uniq.append(p)
+    return uniq
+
+
+def _read_key_file(path: Path) -> str:
+    try:
+        if not path.is_file():
+            return ""
+        return _sanitize_api_key(path.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+
+
+def resolve_api_key(*, environ: dict[str, str] | None = None) -> str:
+    """Resolve MiniMax API key without printing it.
+
+    Order: env MINIMAX_API_KEY → MINIMAX_API_KEY_FILE → env files → default key file.
+    """
+    env = environ if environ is not None else os.environ
+    direct = _sanitize_api_key(env.get("MINIMAX_API_KEY"))
+    if direct:
+        return direct
+
+    file_hint = (env.get("MINIMAX_API_KEY_FILE") or "").strip()
+    if file_hint:
+        key = _read_key_file(Path(file_hint).expanduser())
+        if key:
+            return key
+
+    merged: dict[str, str] = {}
+    for ef in _candidate_env_files(env):
+        vals = _parse_env_file(ef)
+        for k, v in vals.items():
+            merged.setdefault(k, v)
+
+    file_key = _sanitize_api_key(merged.get("MINIMAX_API_KEY"))
+    if file_key:
+        return file_key
+
+    for hint in (
+        merged.get("MINIMAX_API_KEY_FILE"),
+        str(DEFAULT_AURA_BUILD_KEY),
+    ):
+        if not hint:
+            continue
+        key = _read_key_file(Path(hint).expanduser())
+        if key:
+            return key
+    return ""
+
+
+def resolve_base_and_model(*, environ: dict[str, str] | None = None) -> tuple[str, str]:
+    """BASE_URL + MODEL from process env, then shared env files."""
+    env = environ if environ is not None else os.environ
+    merged: dict[str, str] = {}
+    for ef in _candidate_env_files(env):
+        for k, v in _parse_env_file(ef).items():
+            merged.setdefault(k, v)
+    base = _lock_base_url(
+        env.get("MINIMAX_BASE_URL") or merged.get("MINIMAX_BASE_URL")
+    )
+    model = (
+        (env.get("MINIMAX_MODEL") or merged.get("MINIMAX_MODEL") or DEFAULT_MODEL).strip()
+        or DEFAULT_MODEL
+    )
+    return base, model
+
 
 def has_api_key() -> bool:
-    return bool(os.environ.get("MINIMAX_API_KEY", "").strip())
+    return bool(resolve_api_key())
 
 
 def _lock_base_url(url: str | None) -> str:
@@ -52,6 +182,13 @@ def _lock_base_url(url: str | None) -> str:
     if "minimaxi.com" in lower:
         return raw if lower.endswith("/v1") else DEFAULT_BASE
     return DEFAULT_BASE
+
+
+def _friendly_http_error(code: int, detail: str = "") -> str:
+    """Chip-safe HTTP reason — never dump JSON bodies."""
+    if code in (401, 403):
+        return _HTTP_401_HINT
+    return f"http:{code}"
 
 
 def kid_safe_copy(text: str) -> bool:
@@ -141,11 +278,10 @@ def _chat_raw(
     temperature: float = 0.9,
 ) -> tuple[dict[str, Any] | None, str]:
     """Return (parsed_obj|None, error_reason). error empty on success."""
-    key = os.environ.get("MINIMAX_API_KEY", "").strip()
+    key = resolve_api_key()
     if not key:
         return None, "no_key"
-    base = _lock_base_url(os.environ.get("MINIMAX_BASE_URL"))
-    model = os.environ.get("MINIMAX_MODEL", DEFAULT_MODEL)
+    base, model = resolve_base_and_model()
     url = f"{base}/chat/completions"
     body = {"model": model, "messages": messages, "temperature": temperature}
     req = urllib.request.Request(
@@ -154,6 +290,7 @@ def _chat_raw(
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {key}",
+            "Accept": "application/json",
         },
         method="POST",
     )
@@ -161,12 +298,12 @@ def _chat_raw(
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
-        detail = ""
+        # Drain body but never surface JSON on the chip (esp. 401).
         try:
-            detail = exc.read().decode("utf-8", errors="replace")[:80]
+            exc.read()
         except Exception:  # noqa: BLE001
             pass
-        return None, f"http:{exc.code}:{detail[:24] or exc.reason}"
+        return None, _friendly_http_error(int(exc.code))
     except urllib.error.URLError as exc:
         return None, f"net:{type(exc.reason).__name__ if exc.reason else 'URLError'}"
     except TimeoutError:
@@ -181,7 +318,16 @@ def _chat_raw(
     if isinstance(base_resp, dict):
         code = base_resp.get("status_code", 0)
         if code not in (0, "0", None):
+            try:
+                icode = int(code)
+            except (TypeError, ValueError):
+                icode = -1
+            if icode in (401, 1004, 2013, 2049):  # auth / login related
+                return None, _HTTP_401_HINT
             msg = str(base_resp.get("status_msg") or code)[:28]
+            # never leak long JSON-ish status_msg
+            if "{" in msg or '"' in msg:
+                return None, f"api:{code}"
             return None, f"api:{code}:{msg}"
 
     try:

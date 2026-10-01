@@ -33,16 +33,15 @@ Offline Soft-down: badge idle; host shows library art honestly as
 
 | Chip | Meaning |
 |------|---------|
-| `MiniMax 未接 KEY` | No `MINIMAX_API_KEY` — Soft still mutates |
+| `MiniMax 未接 KEY` | No key via env / KEY_FILE / aura-build `minimax.env` — Soft still mutates |
 | `MiniMax probing…` | API call in flight |
 | `MiniMax OK Nms #hash` | Propose succeeded; 「小星星说」refreshed |
-| `MiniMax FAIL (…)` | API/filter fail — Soft AST still live |
+| `MiniMax FAIL (…)` | API/filter fail — Soft AST still live; `401` → `密钥无效或未加载` |
 
 MiniMax only proposes **copy** (title/blurb/art/cheers). Soft owns mutate.
 
 ```bash
 export AURA_BIN=/workspace/aura-grok/build/aura
 make soft
-# optional copy:
-export MINIMAX_API_KEY=...
+# optional copy — export KEY, or share ~/.config/aura-build/minimax.env
 ```
