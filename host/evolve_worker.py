@@ -1,10 +1,10 @@
-"""Background Soft LIVE mutate + optional MiniMax copy — thin host display.
+"""Background Soft LIVE mutate + optional LLM copy — thin host display.
 
 Soft owns product brain: persistent serve → fiber worldlines mutate:rebind
 scene AST attrs → select-best → scene.json (compile_epoch / live_tick).
 Python does NOT invent scene evolution — it displays Soft landings.
 
-MiniMax (only if KEY): proposes copy/feedback; status chip:
+LLM copy (DeepSeek Flash default; TYPEPLAY_LLM=minimax optional):
   no_key | probing | ok (last_ms + hash) | fail (short error).
 """
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from host import soft_bridge
-from host.minimax_scene import continuous_enrich, has_api_key
+from host.llm_copy import continuous_enrich, has_api_key, active_provider
 from host.scenes import SCENES, Scene, apply_soft_scene, rule_based_scene
 
 
@@ -34,10 +34,11 @@ class EvolveSnapshot:
     soft_mutate: bool = False
     compile_epoch: int = 0
     live_tick: int = 0
-    minimax_status: str = "no_key"  # no_key | probing | ok | fail
+    minimax_status: str = "no_key"  # no_key | probing | ok | fail (LLM chip; name kept)
     minimax_error: str = ""
     minimax_last_ms: int = 0
     minimax_hash: str = ""
+    llm_provider: str = ""  # deepseek | minimax
     updated_at: float = 0.0
 
 
@@ -88,6 +89,7 @@ class EvolveWorker:
                 minimax_error=s.minimax_error,
                 minimax_last_ms=s.minimax_last_ms,
                 minimax_hash=s.minimax_hash,
+                llm_provider=s.llm_provider or active_provider(),
                 updated_at=s.updated_at,
             )
 
@@ -129,6 +131,9 @@ class EvolveWorker:
                         "compile_epoch": snap.compile_epoch,
                         "live_tick": snap.live_tick,
                         "soft_mutate": snap.soft_mutate,
+                        "llm_provider": getattr(snap, "llm_provider", "") or active_provider(),
+                        "llm_status": snap.minimax_status,
+                        "llm_error": snap.minimax_error,
                         "minimax_status": snap.minimax_status,
                         "minimax_error": snap.minimax_error,
                         "last_ms": snap.minimax_last_ms,
@@ -143,24 +148,25 @@ class EvolveWorker:
         except OSError:
             pass
 
-    def _want_minimax(self) -> bool:
+    def _want_llm_copy(self) -> bool:
         if not has_api_key():
             return False
-        if self.mode == "minimax":
+        if self.mode in ("minimax", "deepseek"):
             return True
         if self.mode == "soft":
-            return os.environ.get("TYPEPLAY_MINIMAX_COPY", "1").strip() not in (
-                "0",
-                "false",
-                "no",
-            )
+            # TYPEPLAY_LLM_COPY preferred; TYPEPLAY_MINIMAX_COPY kept as alias
+            for key in ("TYPEPLAY_LLM_COPY", "TYPEPLAY_MINIMAX_COPY"):
+                raw = os.environ.get(key)
+                if raw is not None and raw.strip() != "":
+                    return raw.strip().lower() not in ("0", "false", "no")
+            return True  # default on when key resolves
         return False
 
     def _soft_live(self, signals: dict[str, Any]) -> tuple[Scene, str, bool, dict, dict]:
         """Soft live-mutate (preferred). Returns scene, source, ok, style, raw."""
         style: dict[str, Any] = {}
         raw: dict[str, Any] = {}
-        if self.mode not in ("soft", "minimax"):
+        if self.mode not in ("soft", "minimax", "deepseek"):
             theme = str(signals.get("theme_scene") or "")
             if theme in SCENES and float(signals.get("accuracy", 1)) >= 0.75:
                 return SCENES[theme], "offline/theme", False, style, raw
@@ -173,7 +179,7 @@ class EvolveWorker:
             scene, tag = applied
             if isinstance(raw.get("style"), dict):
                 style = dict(raw["style"])
-            # Soft-native feedback until MiniMax overlays
+            # Soft-native feedback until LLM copy overlays
             via = got.get("via") or "live"
             return scene, f"soft-live/{via}", True, style, raw
         # Soft down — honest offline display (not Python inventing Soft)
@@ -200,7 +206,7 @@ class EvolveWorker:
             line_flavor = ""
             tag = "copy/offline"
 
-            want_mm = self._want_minimax()
+            want_mm = self._want_llm_copy()
             now = time.monotonic()
             on_cooldown = now < self._mm_cooldown_until
             if not has_api_key():
@@ -211,7 +217,7 @@ class EvolveWorker:
                 # Keep last FAIL visible instead of perpetual probing…
                 mm_status = "fail"
                 mm_err = self._mm_last_fail or "cooldown"
-                tag = "copy/minimax-cooldown"
+                tag = f"copy/{active_provider()}-cooldown"
                 scene2 = scene
             elif want_mm:
                 mm_status = "probing"
@@ -228,11 +234,12 @@ class EvolveWorker:
                         compile_epoch=int(raw.get("compile_epoch") or 0),
                         live_tick=int(raw.get("live_tick") or 0),
                         minimax_status="probing",
+                        llm_provider=active_provider(),
                         updated_at=time.monotonic(),
                     )
                 )
                 scene2, extras, tag = continuous_enrich(
-                    scene, signals, use_minimax=True
+                    scene, signals, use_llm=True
                 )
                 mm_status = str(extras.get("minimax_status") or "fail")
                 mm_err = str(extras.get("minimax_error") or "")
@@ -258,7 +265,7 @@ class EvolveWorker:
                     self._mm_cooldown_until = time.monotonic() + 25.0
             else:
                 scene2, extras, tag = continuous_enrich(
-                    scene, signals, use_minimax=False
+                    scene, signals, use_llm=False
                 )
                 mm_status = "no_key"
 
@@ -277,6 +284,7 @@ class EvolveWorker:
                 minimax_error=mm_err,
                 minimax_last_ms=mm_ms,
                 minimax_hash=mm_hash,
+                llm_provider=active_provider(),
                 updated_at=time.monotonic(),
             )
             self._publish(snap)

@@ -1,4 +1,4 @@
-"""Typeplay Textual TUI — cute kids play; Soft+MiniMax auto-evolve in background.
+"""Typeplay Textual TUI — cute kids play; Soft+LLM auto-evolve in background.
 
 No key-triggered evolve. Soft multi-propose + select-best owns scene params.
 Python is thin: glyphs, emoji reactions, color bursts, bilingual micro-feedback.
@@ -17,6 +17,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Footer, Header, Static
 
 from host import soft_bridge
+from host.llm_copy import active_provider, provider_label
 from host.evolve_worker import EvolveWorker
 from host.feedback import (
     BACKSPACE_FB,
@@ -129,11 +130,11 @@ class ScenePanel(Static):
                 f"epoch={epoch} tick={live_tick} [/]"
             )
         elif ai:
-            badge = "[bold #ff88ff on #2a1030] 🎨 AI 画画 MiniMax [/]"
+            badge = f"[bold #ff88ff on #2a1030] 🎨 AI 画画 {provider_label()} [/]"
         else:
             badge = "[bold #88aaff on #102030] 🌿 Soft 场景 [/]"
         if ai and soft_mutate:
-            badge += "\n[bold #ff88ff]🎨 + MiniMax 文案[/]"
+            badge += f"\n[bold #ff88ff]🎨 + {provider_label()} 文案[/]"
         self.update(
             f"{badge}\n"
             f"[bold {hue} on #1a1a2e] {scene.title} [/]\n"
@@ -144,7 +145,7 @@ class ScenePanel(Static):
 
 
 class ReactionPanel(Static):
-    """Instant emoji + EN/ZH from local feedback (not MiniMax)."""
+    """Instant emoji + EN/ZH from local feedback (not LLM copy)."""
 
     def show(self, fb: MicroFeedback | None) -> None:
         if fb is None:
@@ -159,30 +160,41 @@ def minimax_status_chip(
     status: str,
     *,
     last_ms: int = 0,
-    err: str = "",
-    content_hash: str = "",
+    err: str = '',
+    content_hash: str = '',
+    provider: str | None = None,
 ) -> str:
-    """Parent-visible MiniMax connectivity chip."""
-    st = (status or "no_key").lower()
-    if st == "ok":
-        h = f" #{content_hash}" if content_hash else ""
-        return f"[bold black on #66ff99] MiniMax OK {last_ms}ms{h} [/]"
-    if st == "probing":
-        return "[bold black on #ffdd66] MiniMax probing… [/]"
-    if st == "fail":
-        e = (err or "").strip()
-        if "密钥文件不存在" in e:
-            short = "密钥文件不存在"
-        elif "401" in e or "403" in e or "密钥无效" in e:
-            short = "密钥无效"
+    """Parent-visible LLM connectivity chip (DeepSeek default / MiniMax optional)."""
+    if provider == 'minimax':
+        label = 'MiniMax'
+    elif provider == 'deepseek':
+        label = 'DeepSeek'
+    elif provider:
+        label = str(provider)
+    else:
+        label = provider_label()
+    st = (status or 'no_key').lower()
+    if st == 'ok':
+        h = f' #{content_hash}' if content_hash else ''
+        return f'[bold black on #66ff99] {label} OK {last_ms}ms{h} [/]'
+    if st == 'probing':
+        return f'[bold black on #ffdd66] {label} probing… [/]'
+    if st == 'fail':
+        e = (err or '').strip()
+        if '密钥文件不存在' in e:
+            short = '密钥文件不存在'
+        elif '401' in e or '403' in e or '密钥无效' in e:
+            short = '密钥无效'
+        elif e.startswith('timeout@'):
+            short = e[:36]
         else:
-            short = (e or "error")[:36]
-        return f"[bold white on #cc3344] MiniMax FAIL ({short}) [/]"
-    return "[bold white on #555577] MiniMax 未接 KEY [/]"
+            short = (e or 'error')[:36]
+        return f'[bold white on #cc3344] {label} FAIL ({short}) [/]'
+    return f'[bold white on #555577] {label} 未接 KEY [/]'
 
 
 class StarSpeakPanel(Static):
-    """Dedicated MiniMax strip — 「小星星说」+ connectivity chip."""
+    """Dedicated LLM strip — 「小星星说」+ connectivity chip."""
 
     def show(
         self,
@@ -202,14 +214,14 @@ class StarSpeakPanel(Static):
         if st == "no_key":
             self.update(
                 f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
-                "  [bold #faa]未接 MiniMax[/] — export KEY 或共用 ~/.config/aura-build/minimax.env\n"
+                f"  [bold #faa]未接 {provider_label()}[/] — export DEEPSEEK_API_KEY 或 deepseek.env\n"
                 "  [dim]Soft 正在 mutate 场景 AST；小星星只负责说话/画画文案[/]"
             )
             return
         if st == "probing":
             self.update(
                 f"[bold #ffd700]🌟 小星星说[/]  {chip}\n"
-                "  [italic]正在呼叫 MiniMax… Soft AST 继续跳动[/]"
+                f"  [italic]正在呼叫 {provider_label()}… Soft AST 继续跳动[/]"
             )
             return
         if st == "fail":
@@ -217,7 +229,7 @@ class StarSpeakPanel(Static):
             if "密钥文件不存在" in e:
                 detail = "密钥文件不存在 — 检查 minimax.env 里 MINIMAX_API_KEY_FILE 路径"
             elif "401" in e or "403" in e or "密钥无效" in e:
-                detail = "密钥无效 — 检查 KEY_FILE 内容或重新登录 MiniMax"
+                detail = f"密钥无效 — 检查 KEY_FILE / {provider_label()} 账号"
             else:
                 detail = e or "unknown"
             self.update(
@@ -235,7 +247,7 @@ class StarSpeakPanel(Static):
         )
         h = f"  hash={content_hash}" if content_hash else ""
         self.update(
-            f"[bold #ffd700 on #302010] 🌟 小星星说 MiniMax [/]  {chip}\n"
+            f"[bold #ffd700 on #302010] 🌟 小星星说 {provider_label()} [/]  {chip}\n"
             f"  [bold cyan]{zh_line}[/]\n"
             f"  [bold #ffd]{en_line}[/]"
             f"{flavor}\n"
@@ -244,7 +256,7 @@ class StarSpeakPanel(Static):
 
 
 class TypeplayApp(App):
-    """Kids typing — auto background Soft+MiniMax evolve; cute feedback TUI."""
+    """Kids typing — auto background Soft+LLM evolve; cute feedback TUI."""
 
     CSS = """
     Screen {
@@ -302,7 +314,7 @@ class TypeplayApp(App):
     ]
 
     TITLE = "aura-typeplay ✿"
-    SUB_TITLE = "cute typing · Soft auto-evolve · MiniMax copy"
+    SUB_TITLE = "cute typing · Soft auto-evolve · DeepSeek copy"
 
     def __init__(self) -> None:
         super().__init__()
@@ -330,6 +342,7 @@ class TypeplayApp(App):
         self._mm_error = ""
         self._mm_ms = 0
         self._mm_hash = ""
+        self._llm_provider = ""
         self._compile_epoch = 0
         self._live_tick = 0
         self._soft_mutate = False
@@ -361,7 +374,7 @@ class TypeplayApp(App):
             yield ScenePanel(id="scene")
         mm = "key✓" if has_api_key() else "no-key"
         yield Static(
-            "Auto Soft+MiniMax · Backspace 退格 · Ctrl+N skip · Ctrl+C quit  ·  "
+            "Auto Soft+LLM · Backspace 退格 · Ctrl+N skip · Ctrl+C quit  ·  "
             f"mode={self.mode} minimax={mm}  ·  错了看黄色大字！",
             id="hint",
         )
@@ -461,7 +474,7 @@ class TypeplayApp(App):
         # Keep status hint fresh with last evolve source
         try:
             self.query_one("#hint", Static).update(
-                "Auto Soft+MiniMax · Backspace 退格 · Ctrl+N skip · Ctrl+C quit  ·  "
+                "Auto Soft+LLM · Backspace 退格 · Ctrl+N skip · Ctrl+C quit  ·  "
                 f"mode={self.mode}  ·  last={self.scene_source}"
             )
         except Exception:  # noqa: BLE001
@@ -488,6 +501,7 @@ class TypeplayApp(App):
         self._mm_error = str(getattr(snap, "minimax_error", "") or "")
         self._mm_ms = int(getattr(snap, "minimax_last_ms", 0) or 0)
         self._mm_hash = str(getattr(snap, "minimax_hash", "") or "")
+        self._llm_provider = str(getattr(snap, "llm_provider", "") or active_provider())
         if snap.style:
             try:
                 self._glyph_scale = float(snap.style.get("glyph_scale") or self._glyph_scale)
