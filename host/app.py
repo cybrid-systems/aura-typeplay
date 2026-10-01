@@ -168,7 +168,7 @@ def minimax_status_chip(
     if st == "probing":
         return "[bold black on #ffdd66] MiniMax probing… [/]"
     if st == "fail":
-        short = (err or "error")[:28]
+        short = (err or "error")[:40]
         return f"[bold white on #cc3344] MiniMax FAIL ({short}) [/]"
     return "[bold white on #555577] MiniMax 未接 KEY [/]"
 

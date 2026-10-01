@@ -2,39 +2,39 @@
 
 MiniMax only proposes kid-safe title / blurb / ASCII art flavor for the
 *current* Soft (or offline) scene. Soft or host select-best the scene id;
-host never gold-hardcodes overrides of accepted LLM copy (unsafe → drop
-proposal and keep rule-based library copy).
+host never gold-hardcodes overrides of accepted LLM copy (unsafe fields
+dropped; Soft/library art may fill if LLM art alone is filtered).
 
 Env:
   MINIMAX_API_KEY   required for live propose
   MINIMAX_BASE_URL  optional (default https://api.minimaxi.com/v1)
-  MINIMAX_MODEL     optional (default MiniMax-Text-01 / MiniMax-M2.5-ish)
+  MINIMAX_MODEL     optional (default MiniMax-M3)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+import time
 import urllib.error
 import urllib.request
 from typing import Any
 
 from host.scenes import SCENES, Scene
 
-# CN OpenAI-compatible endpoint (matches aura-build dogfood)
 DEFAULT_BASE = "https://api.minimaxi.com/v1"
 DEFAULT_MODEL = "MiniMax-M3"
 
-# Block scary / violent / adult content in proposed copy (reject → rule-based).
+# Word-boundary blocks — avoid false positives (war⊂warm, sex⊂next, die⊂dier…).
 _BLOCK_RE = re.compile(
-    r"("
-    r"kill|murder|blood|gore|weapon|gun|knife|sword|bomb|explod|"
-    r"war|battle|fight|attack|die|death|dead|ghost|haunt|horror|"
+    r"(?i)(?<![a-z])("
+    r"kill|murder|blood|gore|weapon|gun|knife|sword|bomb|explode|explosion|"
+    r"war|battle|fight|attack|death|dead|ghost|haunt|horror|"
     r"scary|terror|monster|demon|zombie|skull|violent|abuse|"
-    r"hate|racist|sex|nude|drug|alcohol|cigarette"
-    r")",
-    re.IGNORECASE,
+    r"hate|racist|nude|drugs?|alcohol|cigarette"
+    r")(?![a-z])"
 )
 
 
@@ -55,11 +55,18 @@ def _lock_base_url(url: str | None) -> str:
 
 
 def kid_safe_copy(text: str) -> bool:
-    """True if text passes the kid-safe content filter."""
+    """True if text passes the kid-safe content filter (word-boundary)."""
     if not text or not str(text).strip():
         return False
     return _BLOCK_RE.search(str(text)) is None
 
+
+def kid_safe_hit(text: str) -> str | None:
+    """Return matched blocked token, or None if safe/empty."""
+    if not text or not str(text).strip():
+        return "empty"
+    m = _BLOCK_RE.search(str(text))
+    return m.group(0).lower() if m else None
 
 
 def _extract_json_obj(text: str) -> dict[str, Any] | None:
@@ -67,20 +74,26 @@ def _extract_json_obj(text: str) -> dict[str, Any] | None:
     if not text:
         return None
     s = text.strip()
-    # Drop common chain-of-thought wrappers
     if "</think>" in s:
         s = s.split("</think>", 1)[-1].strip()
+    # strip other think open tags leftovers
+    if "<think>" in s.lower():
+        idx = s.lower().rfind("</think>")
+        if idx >= 0:
+            s = s[idx + len("</think>") :].strip()
     if s.startswith("```"):
         s = s.strip("`")
         if s.lower().startswith("json"):
             s = s[4:].strip()
     try:
         obj = json.loads(s)
-        return obj if isinstance(obj, dict) else None
+        if isinstance(obj, dict):
+            return obj
+        if isinstance(obj, list) and obj and isinstance(obj[0], dict):
+            return {"candidates": obj}
     except json.JSONDecodeError:
         pass
     decoder = json.JSONDecoder()
-    # Prefer the last successful object (final answer after thinking)
     last: dict[str, Any] | None = None
     for i, ch in enumerate(s):
         if ch != "{":
@@ -89,7 +102,9 @@ def _extract_json_obj(text: str) -> dict[str, Any] | None:
             obj, _ = decoder.raw_decode(s, i)
         except json.JSONDecodeError:
             continue
-        if isinstance(obj, dict) and ("title" in obj or "art" in obj):
+        if not isinstance(obj, dict):
+            continue
+        if "candidates" in obj or "title" in obj or "art" in obj:
             last = obj
     return last
 
@@ -106,38 +121,33 @@ def _prompt(scene: Scene, signals: dict) -> str:
         f"Level/theme hints: {json.dumps({k: signals.get(k) for k in ('level_id','theme_scene','accuracy','streak','wpm')})}\n"
         "Rules: friendly animals, nature, space wonder, calm focus, celebration.\n"
         "FORBIDDEN: scary, violent, weapons, death, horror, adult topics.\n"
+        "Avoid words like war/kill/death even inside longer words if unsure.\n"
         "Respond with a single JSON object, no markdown."
     )
 
 
-def propose_copy(
-    scene: Scene,
-    signals: dict,
+class MiniMaxChatError(Exception):
+    """Structured MiniMax failure for chip display."""
+
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason[:48]
+
+
+def _chat_raw(
+    messages: list[dict],
     *,
-    timeout: float = 30.0,
-) -> dict[str, Any] | None:
-    """Ask MiniMax for title/blurb/art for *this* Soft scene. None if no key/error."""
+    timeout: float = 35.0,
+    temperature: float = 0.9,
+) -> tuple[dict[str, Any] | None, str]:
+    """Return (parsed_obj|None, error_reason). error empty on success."""
     key = os.environ.get("MINIMAX_API_KEY", "").strip()
     if not key:
-        return None
-
+        return None, "no_key"
     base = _lock_base_url(os.environ.get("MINIMAX_BASE_URL"))
     model = os.environ.get("MINIMAX_MODEL", DEFAULT_MODEL)
     url = f"{base}/chat/completions"
-    body = {
-        "model": model,
-        "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are a kids game copywriter. JSON only. "
-                    "Never invent violence or scary themes."
-                ),
-            },
-            {"role": "user", "content": _prompt(scene, signals)},
-        ],
-        "temperature": 0.85,
-    }
+    body = {"model": model, "messages": messages, "temperature": temperature}
     req = urllib.request.Request(
         url,
         data=json.dumps(body).encode("utf-8"),
@@ -150,42 +160,119 @@ def propose_copy(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OSError):
-        return None
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode("utf-8", errors="replace")[:80]
+        except Exception:  # noqa: BLE001
+            pass
+        return None, f"http:{exc.code}:{detail[:24] or exc.reason}"
+    except urllib.error.URLError as exc:
+        return None, f"net:{type(exc.reason).__name__ if exc.reason else 'URLError'}"
+    except TimeoutError:
+        return None, "timeout"
+    except json.JSONDecodeError:
+        return None, "http_json"
+    except OSError as exc:
+        return None, f"os:{type(exc).__name__}"
+
+    # MiniMax sometimes wraps status in base_resp
+    base_resp = raw.get("base_resp") if isinstance(raw, dict) else None
+    if isinstance(base_resp, dict):
+        code = base_resp.get("status_code", 0)
+        if code not in (0, "0", None):
+            msg = str(base_resp.get("status_msg") or code)[:28]
+            return None, f"api:{code}:{msg}"
 
     try:
         content = raw["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
-        return None
+        return None, "shape:no_choices"
 
-    text = (content or "").strip()
-    data = _extract_json_obj(text)
+    data = _extract_json_obj(content or "")
     if not isinstance(data, dict):
+        preview = (content or "").strip().replace("\n", " ")[:40]
+        return None, f"parse:{preview or 'empty'}"
+    return data, ""
+
+
+def _chat(
+    messages: list[dict],
+    *,
+    timeout: float = 30.0,
+    temperature: float = 0.9,
+) -> dict[str, Any] | None:
+    data, _err = _chat_raw(messages, timeout=timeout, temperature=temperature)
+    return data
+
+
+def propose_copy(
+    scene: Scene,
+    signals: dict,
+    *,
+    timeout: float = 30.0,
+) -> dict[str, Any] | None:
+    """Ask MiniMax for title/blurb/art for *this* Soft scene."""
+    data, err = _chat_raw(
+        [
+            {
+                "role": "system",
+                "content": (
+                    "You are a kids game copywriter. JSON only. "
+                    "Never invent violence or scary themes."
+                ),
+            },
+            {"role": "user", "content": _prompt(scene, signals)},
+        ],
+        timeout=timeout,
+        temperature=0.85,
+    )
+    if err or not data:
         return None
     return data
 
 
-def select_copy(proposal: dict[str, Any] | None) -> dict[str, str] | None:
-    """Host select-best for copy: accept LLM fields if kid-safe; else None.
+def select_copy(
+    proposal: dict[str, Any] | None,
+    *,
+    scene: Scene | None = None,
+) -> tuple[dict[str, str] | None, str]:
+    """Accept LLM fields if kid-safe. Returns (copy|None, reject_reason).
 
-    No gold rewrite of LLM strings — only accept or reject.
+    If art alone is blocked but title is safe and scene known, use library art
+    (not a rewrite of LLM title/blurb).
     """
     if not proposal or not isinstance(proposal, dict):
-        return None
+        return None, "empty_proposal"
     title = str(proposal.get("title") or "").strip()
     blurb = str(proposal.get("blurb") or proposal.get("subtitle") or "").strip()
     art = str(proposal.get("art") or "").strip()
-    if not title or not art:
-        return None
-    if not kid_safe_copy(title) or not kid_safe_copy(art):
-        return None
-    if blurb and not kid_safe_copy(blurb):
-        blurb = ""  # drop blurb only; keep title/art if safe
-    return {"title": title, "blurb": blurb, "art": art}
+    if not title:
+        return None, "no_title"
+    hit = kid_safe_hit(title)
+    if hit:
+        return None, f"filter:title:{hit}"
+    if art:
+        hit = kid_safe_hit(art)
+        if hit:
+            # Soft/library art fallback for known scene ids
+            if scene is not None and scene.id in SCENES:
+                art = SCENES[scene.id].art.strip("\n")
+            else:
+                return None, f"filter:art:{hit}"
+    elif scene is not None and scene.id in SCENES:
+        art = SCENES[scene.id].art.strip("\n")
+    else:
+        return None, "no_art"
+    if blurb:
+        hit = kid_safe_hit(blurb)
+        if hit:
+            blurb = ""
+    return {"title": title, "blurb": blurb, "art": art}, ""
 
 
 def apply_copy(base: Scene, copy: dict[str, str]) -> Scene:
-    """Merge accepted MiniMax copy onto Soft-owned id/hue/energy. No param overrides."""
+    """Merge accepted MiniMax copy onto Soft-owned id/hue/energy."""
     return Scene(
         id=base.id,
         title=copy["title"],
@@ -197,7 +284,6 @@ def apply_copy(base: Scene, copy: dict[str, str]) -> Scene:
 
 
 def rule_based_copy(scene: Scene) -> Scene:
-    """Offline / no-key: library art already on scene (identity)."""
     if scene.id in SCENES and not scene.blurb:
         lib = SCENES[scene.id]
         return Scene(
@@ -217,30 +303,20 @@ def enrich_scene_copy(
     *,
     use_minimax: bool | None = None,
 ) -> tuple[Scene, str]:
-    """Fill copy for Soft-owned scene. Returns (scene, source_tag).
-
-    use_minimax defaults True when TYPEPLAY_MODE=minimax or TYPEPLAY_MINIMAX_COPY=1
-    and API key is set.
-    """
     if use_minimax is None:
         mode = os.environ.get("TYPEPLAY_MODE", "offline").lower()
         flag = os.environ.get("TYPEPLAY_MINIMAX_COPY", "").strip() in ("1", "true", "yes")
         use_minimax = (mode == "minimax" or flag) and has_api_key()
-
     if not use_minimax:
         return rule_based_copy(scene), "copy/offline"
-
     proposal = propose_copy(scene, signals)
-    chosen = select_copy(proposal)
+    chosen, _why = select_copy(proposal, scene=scene)
     if chosen:
         return apply_copy(scene, chosen), "copy/minimax"
     return rule_based_copy(scene), "copy/offline(fallback)"
 
 
-# --- back-compat thin aliases (older callers) ---
-
 def propose_scene(signals: dict, *, timeout: float = 12.0) -> dict[str, Any] | None:
-    """Deprecated path: propose copy for rule-based scene id from signals."""
     from host.scenes import rule_based_scene
 
     base = rule_based_scene(signals)
@@ -254,7 +330,7 @@ def propose_or_none(signals: dict) -> dict[str, Any] | None:
 
 
 def scene_from_copy_proposal(base: Scene, proposal: dict | None) -> Scene | None:
-    chosen = select_copy(proposal)
+    chosen, _ = select_copy(proposal, scene=base)
     if not chosen:
         return None
     return apply_copy(base, chosen)
@@ -266,36 +342,15 @@ def _multi_prompt(scene: Scene, signals: dict, n: int = 3) -> str:
         "Soft already locked scene id/hue/energy — you only invent flavor.\n"
         'Return: {"candidates":[{title,blurb,art,style,feedback_en,feedback_zh,line_flavor},...]}\n'
         "style: one of gentle|sparkle|party|soft|wonder\n"
+        "art: prefer emoji/ascii line art (not long prose paragraphs)\n"
         "line_flavor: short EN hint for the next typing vibe (≤8 words)\n"
         "feedback_en / feedback_zh: encouraging micro lines\n"
-        f"Locked id={scene.id} hue={scene.hue} energy={scene.energy} mood={getattr(scene, 'blurb', '')}\n"
-        f"signals={json.dumps({k: signals.get(k) for k in ('accuracy','streak','wpm','rhythm_cv','recent_accuracy','burstiness','theme_scene','level_id')})}\n"
-        "FORBIDDEN: scary, violent, weapons, death, horror, adult topics.\n"
+        f"Locked id={scene.id} hue={scene.hue} energy={scene.energy}\n"
+        f"signals={json.dumps({k: signals.get(k) for k in ('accuracy','streak','wpm','rhythm_cv','theme_scene','level_id')})}\n"
+        "FORBIDDEN: violence, weapons, death, horror, adult topics.\n"
+        "Do not use the standalone words: war, kill, death, blood, fight.\n"
         "JSON only, no markdown."
     )
-
-
-def _chat(messages: list[dict], *, timeout: float = 30.0, temperature: float = 0.9) -> dict[str, Any] | None:
-    key = os.environ.get("MINIMAX_API_KEY", "").strip()
-    if not key:
-        return None
-    base = _lock_base_url(os.environ.get("MINIMAX_BASE_URL"))
-    model = os.environ.get("MINIMAX_MODEL", DEFAULT_MODEL)
-    url = f"{base}/chat/completions"
-    body = {"model": model, "messages": messages, "temperature": temperature}
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            raw = json.loads(resp.read().decode("utf-8"))
-        content = raw["choices"][0]["message"]["content"]
-    except Exception:  # noqa: BLE001
-        return None
-    return _extract_json_obj(content or "")
 
 
 def propose_copy_multi(
@@ -303,10 +358,10 @@ def propose_copy_multi(
     signals: dict,
     *,
     n: int = 3,
-    timeout: float = 35.0,
-) -> list[dict[str, Any]]:
-    """MiniMax multi-propose copy/style/feedback; Soft/host select-best later."""
-    data = _chat(
+    timeout: float = 40.0,
+) -> tuple[list[dict[str, Any]], str]:
+    """Return (candidates, error_reason). error empty on success with ≥1 cand."""
+    data, err = _chat_raw(
         [
             {
                 "role": "system",
@@ -315,29 +370,35 @@ def propose_copy_multi(
             {"role": "user", "content": _multi_prompt(scene, signals, n=n)},
         ],
         timeout=timeout,
-        temperature=0.92,
+        temperature=0.85,
     )
+    if err:
+        return [], err
     if not data:
-        return []
+        return [], "parse:empty"
     cands = data.get("candidates")
+    out: list[dict[str, Any]] = []
     if isinstance(cands, list):
-        return [c for c in cands if isinstance(c, dict)]
-    # single object fallback
-    if "title" in data or "art" in data:
-        return [data]
-    return []
+        out = [c for c in cands if isinstance(c, dict)]
+    elif "title" in data or "art" in data:
+        out = [data]
+    if out:
+        return out, ""
+    # Fallback: single-object propose
+    one = propose_copy(scene, signals, timeout=min(30.0, timeout))
+    if one:
+        return [one], ""
+    return [], "no_candidates"
 
 
 def select_best_copy(
     candidates: list[dict[str, Any]],
     scene: Scene,
     signals: dict,
-) -> dict[str, Any] | None:
-    """Thin host select-best among MiniMax candidates using Soft signals.
-
-    No gold rewrite of LLM strings — score + kid-safe accept/reject only.
-    Soft owns scene id; preference uses streak/rhythm/accuracy.
-    """
+) -> tuple[dict[str, Any] | None, str]:
+    """Select-best among MiniMax candidates. Returns (best|None, reason)."""
+    if not candidates:
+        return None, "no_candidates"
     streak = int(signals.get("streak", 0) or 0)
     rhythm = float(signals.get("rhythm_cv", 0) or 0)
     acc = float(signals.get("accuracy", 1) or 1)
@@ -353,20 +414,26 @@ def select_best_copy(
 
     best: dict[str, Any] | None = None
     best_score = -1.0
+    rejects: list[str] = []
     for raw in candidates:
-        chosen = select_copy(raw)
+        chosen, why = select_copy(raw, scene=scene)
         if not chosen:
+            rejects.append(why or "reject")
             continue
         style = str(raw.get("style") or "gentle")
-        if style and not kid_safe_copy(style):
+        hit = kid_safe_hit(style) if style else None
+        if hit and hit != "empty":
+            rejects.append(f"filter:style:{hit}")
             continue
         fe = str(raw.get("feedback_en") or "")
         fz = str(raw.get("feedback_zh") or "")
         lf = str(raw.get("line_flavor") or "")
-        for extra in (fe, fz, lf):
-            if extra and not kid_safe_copy(extra):
-                fe, fz, lf = "", "", lf if kid_safe_copy(lf) else ""
-                break
+        if fe and kid_safe_hit(fe):
+            fe = ""
+        if fz and kid_safe_hit(fz):
+            fz = ""
+        if lf and kid_safe_hit(lf):
+            lf = ""
         score = 1.0
         if style == prefer_style:
             score += 2.0
@@ -385,7 +452,13 @@ def select_best_copy(
                 "feedback_zh": fz,
                 "line_flavor": lf,
             }
-    return best
+    if best:
+        return best, ""
+    # summarize rejects for chip
+    reason = rejects[0] if rejects else "filtered_all"
+    if len(rejects) > 1:
+        reason = f"{reason}+{len(rejects)-1}more"
+    return None, reason[:48]
 
 
 def continuous_enrich(
@@ -396,13 +469,8 @@ def continuous_enrich(
 ) -> tuple[Scene, dict[str, Any], str]:
     """Background path: multi-propose → select-best → scene + extras.
 
-    Returns (scene, extras, tag). extras always includes minimax_status:
-      no_key | probing | ok | fail
-    plus last_ms / content_hash when a propose ran.
+    extras.minimax_error carries real reason: http:… / parse:… / filter:…
     """
-    import hashlib
-    import time as _time
-
     extras: dict[str, Any] = {
         "minimax_status": "no_key",
         "minimax_error": "",
@@ -415,22 +483,30 @@ def continuous_enrich(
     if not use_minimax:
         extras["minimax_status"] = "no_key"
         return rule_based_copy(scene), extras, "copy/offline"
+
     extras["minimax_status"] = "probing"
-    t0 = _time.monotonic()
+    t0 = time.monotonic()
     try:
-        cands = propose_copy_multi(scene, signals)
+        cands, cerr = propose_copy_multi(scene, signals)
     except Exception as exc:  # noqa: BLE001
         extras["minimax_status"] = "fail"
         extras["minimax_error"] = type(exc).__name__[:40]
-        extras["last_ms"] = int((_time.monotonic() - t0) * 1000)
+        extras["last_ms"] = int((time.monotonic() - t0) * 1000)
         return rule_based_copy(scene), extras, "copy/minimax-fail"
-    elapsed = int((_time.monotonic() - t0) * 1000)
+
+    elapsed = int((time.monotonic() - t0) * 1000)
     extras["last_ms"] = elapsed
-    chosen = select_best_copy(cands, scene, signals)
+    if cerr:
+        extras["minimax_status"] = "fail"
+        extras["minimax_error"] = cerr[:48]
+        return rule_based_copy(scene), extras, "copy/minimax-fail"
+
+    chosen, sreason = select_best_copy(cands, scene, signals)
     if not chosen:
         extras["minimax_status"] = "fail"
-        extras["minimax_error"] = "empty_or_filtered"
+        extras["minimax_error"] = (sreason or "empty_or_filtered")[:48]
         return rule_based_copy(scene), extras, "copy/minimax-fail"
+
     blob = json.dumps(chosen, ensure_ascii=False, sort_keys=True)
     extras.update(
         {
