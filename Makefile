@@ -56,7 +56,7 @@ doctor: ensure-venv
 	@echo "AURA_BIN=$(AURA_BIN)"
 	@test -x "$(AURA_BIN)" && echo "Soft binary: ok" || echo "Soft binary: MISSING"
 	@PY=$$($(PY_SH)); $$PY -c "import textual; print('textual', textual.__version__)"
-	@PY=$$($(PY_SH)); $$PY -c "from host.minimax_scene import has_api_key; print('MiniMax key:' , 'resolved' if has_api_key() else 'missing')"
+	@PY=$$($(PY_SH)); $$PY -c "from host.minimax_scene import has_api_key, resolve_minimax; c=resolve_minimax(); print('MiniMax key:' , 'resolved' if has_api_key() else 'missing'); print('MiniMax base:', c.base_url, 'model:', c.model)"
 	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY -c "from host.soft_bridge import doctor; import json; print(json.dumps(doctor(), indent=2))"
 
 smoke-soft: ensure-venv

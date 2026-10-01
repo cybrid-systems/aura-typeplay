@@ -435,9 +435,16 @@ def _chat_raw(
             pass
         return None, _friendly_http_error(int(exc.code))
     except urllib.error.URLError as exc:
-        return None, f"net:{type(exc.reason).__name__ if exc.reason else 'URLError'}"
+        reason = exc.reason
+        rname = type(reason).__name__ if reason else "URLError"
+        # socket.timeout often arrives as URLError
+        if "timed out" in str(reason).lower() or rname in ("timeout", "TimeoutError"):
+            host = base.replace("https://", "").replace("http://", "").split("/")[0]
+            return None, f"timeout@{host}"
+        return None, f"net:{rname}"
     except TimeoutError:
-        return None, "timeout"
+        host = base.replace("https://", "").replace("http://", "").split("/")[0]
+        return None, f"timeout@{host}"
     except json.JSONDecodeError:
         return None, "http_json"
     except OSError as exc:
@@ -486,7 +493,7 @@ def propose_copy(
     scene: Scene,
     signals: dict,
     *,
-    timeout: float = 12.0,
+    timeout: float = 45.0,
 ) -> dict[str, Any] | None:
     """Ask MiniMax for title/blurb/art for *this* Soft scene."""
     data, err = _chat_raw(
@@ -634,7 +641,7 @@ def propose_copy_multi(
     signals: dict,
     *,
     n: int = 3,
-    timeout: float = 12.0,
+    timeout: float = 45.0,
 ) -> tuple[list[dict[str, Any]], str]:
     """Return (candidates, error_reason). error empty on success with ≥1 cand."""
     data, err = _chat_raw(
@@ -661,7 +668,7 @@ def propose_copy_multi(
     if out:
         return out, ""
     # Fallback: single-object propose
-    one = propose_copy(scene, signals, timeout=min(10.0, timeout))
+    one = propose_copy(scene, signals, timeout=min(30.0, timeout))
     if one:
         return [one], ""
     return [], "no_candidates"
