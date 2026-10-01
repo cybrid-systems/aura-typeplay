@@ -36,7 +36,7 @@ export AURA_BIN=/workspace/aura-grok/build/aura
 export AURA_SANDBOX=off
 ```
 
-MiniMax propose (host thin; Soft/host select):
+MiniMax propose (host thin; Soft/host select) — see below:
 
 ```bash
 export MINIMAX_API_KEY=...
@@ -59,6 +59,23 @@ Progressive ladder in [`host/levels.py`](host/levels.py) — see [`docs/levels.m
 
 Advance: 3 lines at ≥85% line accuracy. Soft scene may hint the next theme forward.
 
+
+## MiniMax scene copy
+
+Soft (or offline rules) **select** scene `id` / `hue` / `energy`. MiniMax only
+**proposes** kid-safe `title` / `blurb` / ASCII `art` for that scene — host
+select-best accepts or rejects (content filter); no gold rewrite of LLM copy.
+No key / reject → library rule-based copy.
+
+```bash
+export MINIMAX_API_KEY=...          # required for live propose
+# optional: MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+# optional: MINIMAX_MODEL=MiniMax-M3
+make minimax                        # Soft/host select id → MiniMax copy
+# Soft mode + copy: TYPEPLAY_MINIMAX_COPY=1 make soft
+make smoke-minimax-copy             # filter smoke (+ live if key set)
+```
+
 ### Keys
 
 | Key | Action |
@@ -76,7 +93,7 @@ host/               Python Textual TUI (thin host)
   soft_bridge.py    Soft --serve / oneshot bridge (thin)
   metrics.py        accuracy / WPM / streak / rhythm_cv
   scenes.py         ANSI scenes + offline + apply Soft scene
-  minimax_scene.py  MiniMax propose (env key); Soft/host select
+  minimax_scene.py  MiniMax copy propose (title/blurb/art); Soft owns id/hue/energy
   levels.py         progressive bilingual levels + hints
   lines.py          back-compat re-export
 aura/               Soft product brain (.aura) + integration notes

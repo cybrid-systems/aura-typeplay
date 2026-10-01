@@ -13,6 +13,7 @@ class Scene:
     # evolve params Soft/host may mutate
     hue: str = "cyan"
     energy: float = 0.5  # 0..1
+    blurb: str = ""  # kid-safe subtitle; MiniMax may propose
 
 
 # Base scene library — rule-based offline picker selects among these.
@@ -20,6 +21,7 @@ class Scene:
 SCENES: dict[str, Scene] = {
     "meadow": Scene(
         id="meadow",
+        blurb="Sun and soft flowers say hello",
         title="Sunny Meadow",
         hue="green",
         energy=0.4,
@@ -33,6 +35,7 @@ SCENES: dict[str, Scene] = {
     ),
     "ocean": Scene(
         id="ocean",
+        blurb="Gentle waves and smiling fish",
         title="Calm Ocean",
         hue="blue",
         energy=0.35,
@@ -46,6 +49,7 @@ SCENES: dict[str, Scene] = {
     ),
     "space": Scene(
         id="space",
+        blurb="Friendly stars wink at you",
         title="Star Garden",
         hue="magenta",
         energy=0.7,
@@ -58,6 +62,7 @@ SCENES: dict[str, Scene] = {
     ),
     "forest": Scene(
         id="forest",
+        blurb="Quiet trees and kind friends",
         title="Quiet Forest",
         hue="green",
         energy=0.3,
@@ -70,6 +75,7 @@ SCENES: dict[str, Scene] = {
     ),
     "party": Scene(
         id="party",
+        blurb="You did it — keep smiling!",
         title="Streak Party!",
         hue="yellow",
         energy=0.95,
@@ -82,6 +88,7 @@ SCENES: dict[str, Scene] = {
     ),
     "focus": Scene(
         id="focus",
+        blurb="Slow fingers, steady heart",
         title="Focus Cave",
         hue="white",
         energy=0.2,
@@ -126,7 +133,8 @@ def scene_from_proposal(data: dict) -> Scene | None:
             return None
         hue = str(data.get("hue") or "cyan")
         energy = float(data.get("energy", 0.5))
-        return Scene(id=sid, title=title, art=art, hue=hue, energy=energy)
+        blurb = str(data.get("blurb") or "")
+        return Scene(id=sid, title=title, art=art, hue=hue, energy=energy, blurb=blurb)
     except (TypeError, ValueError):
         return None
 
@@ -148,7 +156,9 @@ def apply_soft_scene(data: dict | None, signals: dict) -> tuple[Scene, str] | No
         except (TypeError, ValueError):
             energy = base.energy
         title = str(data.get("title") or base.title)
-        return Scene(id=sid, title=title, art=base.art, hue=hue, energy=energy), "soft"
+        return Scene(
+            id=sid, title=title, art=base.art, hue=hue, energy=energy, blurb=base.blurb
+        ), "soft"
     # custom Soft/MiniMax art payload
     custom = scene_from_proposal(data)
     if custom:

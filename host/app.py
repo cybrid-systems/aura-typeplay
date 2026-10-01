@@ -16,8 +16,8 @@ from textual.widgets import Footer, Header, Static
 
 from host.levels import LevelProgress
 from host.metrics import SessionScore
-from host.minimax_scene import propose_or_none
-from host.scenes import Scene, apply_soft_scene, rule_based_scene, scene_from_proposal
+from host.minimax_scene import enrich_scene_copy, has_api_key
+from host.scenes import Scene, apply_soft_scene, rule_based_scene
 from host import soft_bridge
 
 AURA_BIN = soft_bridge.resolve_aura_bin()
@@ -75,9 +75,11 @@ class ScenePanel(Static):
             "green", "blue", "magenta", "yellow", "cyan", "white", "red"
         } else "cyan"
         art = scene.art.strip("\n")
+        blurb = f"\n[i]{scene.blurb}[/]" if scene.blurb else ""
         self.update(
             f"[b {hue}]{scene.title}[/]  "
-            f"[dim]({scene.id} · energy={scene.energy:.2f} · via {source})[/]\n\n"
+            f"[dim]({scene.id} · energy={scene.energy:.2f} · via {source})[/]"
+            f"{blurb}\n\n"
             f"[{hue}]{art}[/]"
         )
 
@@ -138,9 +140,10 @@ class TypeplayApp(App):
             yield TargetPanel(id="target")
             yield ScenePanel(id="scene")
         soft_note = "serve" if self._soft and self._soft.alive else self.mode
+        mm = "key" if has_api_key() else "no-key"
         yield Static(
             "Ctrl+N skip · Ctrl+E evolve · Ctrl+C quit  ·  "
-            f"mode={self.mode}  ·  soft={soft_note}  ·  "
+            f"mode={self.mode}  ·  soft={soft_note}  ·  minimax={mm}  ·  "
             f"AURA_BIN={AURA_BIN}",
             id="hint",
         )
@@ -218,6 +221,20 @@ class TypeplayApp(App):
             self.scene = rule_based_scene(signals)
         self.scene_source = "offline"
 
+    def _enrich_copy(self, signals: dict) -> None:
+        """MiniMax proposes title/blurb/art; Soft-owned id/hue/energy stay."""
+        want = self.mode == "minimax" or (
+            os.environ.get("TYPEPLAY_MINIMAX_COPY", "").strip() in ("1", "true", "yes")
+        )
+        if not want:
+            return
+        scene, tag = enrich_scene_copy(self.scene, signals, use_minimax=want and has_api_key())
+        self.scene = scene
+        if "minimax" in tag:
+            self.scene_source = f"{self.scene_source}+{tag}"
+        elif self.mode == "minimax":
+            self.scene_source = f"{self.scene_source}+{tag}"
+
     def _maybe_evolve(self, force: bool = False) -> None:
         if not force and self.score.chars_done % self._evolve_every != 0:
             return
@@ -231,29 +248,35 @@ class TypeplayApp(App):
                 self.scene, _ = applied
                 via = got.get("via") or "soft"
                 self.scene_source = f"soft/{via}"
-                # Soft scene can hint a higher level theme
                 self.progress.hint_from_scene(self.scene.id)
                 self.target = self.progress.target_text()
+                self._enrich_copy(signals)
                 self._refresh_all()
                 return
             self._apply_offline(signals)
             self.scene_source = f"offline(soft_fallback:{got.get('via')})"
+            self._enrich_copy(signals)
             self._refresh_all()
             return
 
+        # minimax / offline: Soft or host select-best scene id first
         if self.mode == "minimax":
-            proposal = propose_or_none(signals)
-            if proposal:
-                scene = scene_from_proposal(proposal)
-                if scene:
-                    self.scene = scene
-                    self.scene_source = "minimax"
-                    self.progress.hint_from_scene(scene.id)
-                    self.target = self.progress.target_text()
-                    self._refresh_all()
-                    return
+            # Prefer Soft oneshot for id/hue/energy when binary present
+            got = soft_bridge.evolve_with_soft(signals, serve=None)
+            applied = apply_soft_scene(got.get("scene"), signals) if got.get("ok") else None
+            if applied:
+                self.scene, _ = applied
+                self.scene_source = "soft-select"
+                self.progress.hint_from_scene(self.scene.id)
+                self.target = self.progress.target_text()
+            else:
+                self._apply_offline(signals)
+            self._enrich_copy(signals)
+            self._refresh_all()
+            return
 
         self._apply_offline(signals)
+        self._enrich_copy(signals)
         self._refresh_all()
 
     def on_key(self, event: events.Key) -> None:
