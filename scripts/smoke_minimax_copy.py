@@ -40,7 +40,7 @@ def _assert_keyfile_only_env() -> None:
         env_path.write_text(
             "\n".join(
                 [
-                    "MINIMAX_BASE_URL=https://api.minimaxi.com/v1",
+                    "MINIMAX_BASE_URL=https://api.minimax.cn/v1",
                     "MINIMAX_MODEL=MiniMax-M3",
                     f"MINIMAX_API_KEY_FILE={key_path}",
                     "",
@@ -55,7 +55,7 @@ def _assert_keyfile_only_env() -> None:
         }
         cfg = resolve_minimax(environ=environ)
         assert cfg.api_key == "sk-unit-test-key-xyz", "KEY_FILE from env file not loaded"
-        assert cfg.base_url == "https://api.minimaxi.com/v1"
+        assert cfg.base_url == "https://api.minimax.cn/v1"
         assert cfg.model == "MiniMax-M3"
         assert cfg.key_file == str(key_path)
         assert not cfg.error
@@ -63,7 +63,7 @@ def _assert_keyfile_only_env() -> None:
         # Missing KEY_FILE path → clear chip hint
         missing = td_path / "missing_key"
         env_path.write_text(
-            f"MINIMAX_BASE_URL=https://api.minimaxi.com/v1\n"
+            f"MINIMAX_BASE_URL=https://api.minimax.cn/v1\n"
             f"MINIMAX_MODEL=MiniMax-M3\n"
             f"MINIMAX_API_KEY_FILE={missing}\n",
             encoding="utf-8",
@@ -80,7 +80,7 @@ def _assert_keyfile_only_env() -> None:
         tilde_key = home / "k"
         tilde_key.write_text("sk-tilde-key", encoding="utf-8")
         env_path.write_text(
-            "MINIMAX_BASE_URL=https://api.minimaxi.com/v1\n"
+            "MINIMAX_BASE_URL=https://api.minimax.cn/v1\n"
             "MINIMAX_MODEL=MiniMax-M3\n"
             "MINIMAX_API_KEY_FILE=~/k\n",
             encoding="utf-8",

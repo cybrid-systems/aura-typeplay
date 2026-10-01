@@ -43,7 +43,7 @@ MiniMax propose (host thin; Soft/host select) — see below:
 ```bash
 # No export needed if aura-build env exists (KEY_FILE only is enough):
 #   ~/.config/aura-build/minimax.env
-#     MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+#     MINIMAX_BASE_URL=https://api.minimax.cn/v1
 #     MINIMAX_MODEL=MiniMax-M3
 #     MINIMAX_API_KEY_FILE=/path/to/key
 # Or: export MINIMAX_API_KEY=...
@@ -88,11 +88,11 @@ No key / reject → library rule-based copy.
 #   1) export MINIMAX_API_KEY=...
 #   2) export MINIMAX_API_KEY_FILE=/path/to/key
 #   3) share ~/.config/aura-build/minimax.env — typically ONLY:
-#        MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+#        MINIMAX_BASE_URL=https://api.minimax.cn/v1
 #        MINIMAX_MODEL=MiniMax-M3
 #        MINIMAX_API_KEY_FILE=/path/to/key   # typeplay reads this file
 #      (no need to export KEY if that env file exists)
-# optional: MINIMAX_BASE_URL=https://api.minimaxi.com/v1
+# optional: MINIMAX_BASE_URL=https://api.minimax.cn/v1
 # optional: MINIMAX_MODEL=MiniMax-M3
 make minimax                        # Soft/host select id → MiniMax copy
 # Soft mode + copy: TYPEPLAY_MINIMAX_COPY=1 make soft

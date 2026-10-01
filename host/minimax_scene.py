@@ -16,7 +16,7 @@ Key resolution (mirrors aura-build ``load_minimax_config``; never logged):
      read that path (expand ``~``)
   5. fallback ~/.config/aura-build/minimax_api_key
 
-BASE_URL / MODEL: process env, else same env file, else CN defaults.
+BASE_URL / MODEL: process env, else same env file, else https://api.minimax.cn/v1.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any
 
 from host.scenes import SCENES, Scene
 
-DEFAULT_BASE = "https://api.minimaxi.com/v1"
+DEFAULT_BASE = "https://api.minimax.cn/v1"
 DEFAULT_MODEL = "MiniMax-M3"
 DEFAULT_AURA_BUILD_ENV = Path.home() / ".config" / "aura-build" / "minimax.env"
 DEFAULT_AURA_BUILD_KEY = Path.home() / ".config" / "aura-build" / "minimax_api_key"
@@ -290,18 +290,26 @@ def has_api_key() -> bool:
 
 
 def _lock_base_url(url: str | None) -> str:
-    """Force MiniMax CN endpoint; rewrite .io → minimaxi.com/v1 (aura-build)."""
+    """Normalize MiniMax API base to api.minimax.cn (国内).
+
+    Previously forced everything onto api.minimaxi.com — that caused
+    FAIL(timeout) on networks that only reach .cn. Escape hatch:
+    TYPEPLAY_MINIMAX_ALLOW_COM=1 keeps an explicit .com URL.
+    """
     raw = (url or "").strip().rstrip("/")
     if not raw:
         return DEFAULT_BASE
     lower = raw.lower()
-    if "minimax.io" in lower:
+    allow_com = (os.environ.get("TYPEPLAY_MINIMAX_ALLOW_COM") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    if allow_com and "minimaxi.com" in lower:
+        return "https://api.minimaxi.com/v1"
+    # .io / .com / bare → .cn
+    if any(h in lower for h in ("minimax.io", "minimaxi.com", "minimax.cn")):
         return DEFAULT_BASE
-    if "minimaxi.com" in lower:
-        return DEFAULT_BASE if not lower.endswith("/v1") else (
-            "https://api.minimaxi.com/v1"
-        )
-    # Unknown host — dogfood on CN (keys are CN-scoped)
     return DEFAULT_BASE
 
 
