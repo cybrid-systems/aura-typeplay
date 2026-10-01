@@ -43,6 +43,7 @@ offline: ensure-venv
 
 # Soft serve observe-steer (falls back offline if Soft down)
 soft: ensure-venv
+	@test -x "$(AURA_BIN)" || echo "warn: Soft missing at AURA_BIN=$(AURA_BIN) — TUI runs offline(soft_down); set AURA_BIN to your Soft binary"
 	@PY=$$($(PY_SH)); TYPEPLAY_MODE=soft AURA_BIN=$(AURA_BIN) $$PY -m host.app
 
 # Soft/host select scene id; MiniMax proposes title/blurb/art (KEY / KEY_FILE / aura-build env)

@@ -62,6 +62,9 @@ class EvolveWorker:
         self._snap = EvolveSnapshot(scene=SCENES.get("forest", rule_based_scene({})))
         self._busy = False
         self._kick = threading.Event()
+        # After MiniMax fail, keep FAIL chip visible; skip re-probe for a bit
+        self._mm_cooldown_until = 0.0
+        self._mm_last_fail = ""
 
     @property
     def busy(self) -> bool:
@@ -174,30 +177,41 @@ class EvolveWorker:
             via = got.get("via") or "live"
             return scene, f"soft-live/{via}", True, style, raw
         # Soft down — honest offline display (not Python inventing Soft)
+        why = str(got.get("reason") or "down")[:28]
         theme = str(signals.get("theme_scene") or "")
+        tag = f"offline(soft_down:{why})"
         if theme in SCENES:
-            return SCENES[theme], "offline(soft_down)", False, style, raw
-        return rule_based_scene(signals), "offline(soft_down)", False, style, raw
+            return SCENES[theme], tag, False, style, raw
+        return rule_based_scene(signals), tag, False, style, raw
 
     def _round(self) -> None:
         self._busy = True
+        mm_status = "no_key"
+        mm_err = ""
+        mm_ms = 0
+        mm_hash = ""
         try:
             signals = self.signals_fn()
             soft_bridge.write_observe(signals)
             scene, source, soft_ok, style, raw = self._soft_live(signals)
 
-            mm_status = "no_key"
-            mm_err = ""
-            mm_ms = 0
-            mm_hash = ""
             fb_en = str(raw.get("feedback_en") or "")
             fb_zh = str(raw.get("feedback_zh") or "")
             line_flavor = ""
+            tag = "copy/offline"
 
             want_mm = self._want_minimax()
+            now = time.monotonic()
+            on_cooldown = now < self._mm_cooldown_until
             if not has_api_key():
                 mm_status = "no_key"
                 tag = "copy/offline(no-key)"
+                scene2 = scene
+            elif want_mm and on_cooldown:
+                # Keep last FAIL visible instead of perpetual probing…
+                mm_status = "fail"
+                mm_err = self._mm_last_fail or "cooldown"
+                tag = "copy/minimax-cooldown"
                 scene2 = scene
             elif want_mm:
                 mm_status = "probing"
@@ -225,6 +239,8 @@ class EvolveWorker:
                 mm_ms = int(extras.get("last_ms") or 0)
                 mm_hash = str(extras.get("content_hash") or "")
                 if mm_status == "ok":
+                    self._mm_cooldown_until = 0.0
+                    self._mm_last_fail = ""
                     if extras.get("feedback_en"):
                         fb_en = str(extras["feedback_en"])
                     if extras.get("feedback_zh"):
@@ -236,6 +252,10 @@ class EvolveWorker:
                             "burst": extras["style"],
                             "mood": style.get("mood", ""),
                         }
+                else:
+                    self._mm_last_fail = mm_err or "fail"
+                    # 25s cool-down so chip shows FAIL, not endless probing
+                    self._mm_cooldown_until = time.monotonic() + 25.0
             else:
                 scene2, extras, tag = continuous_enrich(
                     scene, signals, use_minimax=False
@@ -260,6 +280,28 @@ class EvolveWorker:
                 updated_at=time.monotonic(),
             )
             self._publish(snap)
+        except Exception as exc:  # noqa: BLE001
+            # Never leave the chip stuck on probing…
+            self._mm_last_fail = type(exc).__name__[:40]
+            self._mm_cooldown_until = time.monotonic() + 25.0
+            with self._lock:
+                prev = self._snap
+            self._publish(
+                EvolveSnapshot(
+                    scene=prev.scene,
+                    source=(prev.source or "offline") + "+mm_exc",
+                    style=dict(prev.style),
+                    feedback_en=prev.feedback_en,
+                    feedback_zh=prev.feedback_zh,
+                    soft_ok=prev.soft_ok,
+                    soft_mutate=prev.soft_mutate,
+                    compile_epoch=prev.compile_epoch,
+                    live_tick=prev.live_tick,
+                    minimax_status="fail",
+                    minimax_error=self._mm_last_fail,
+                    updated_at=time.monotonic(),
+                )
+            )
         finally:
             self._busy = False
 
@@ -267,7 +309,7 @@ class EvolveWorker:
         while not self._stop.is_set():
             try:
                 self._round()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001 — _round already clears probing
                 pass
             if self._stop.is_set():
                 break

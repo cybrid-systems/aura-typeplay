@@ -128,11 +128,11 @@ class SoftServe:
     last_error: str = ""
 
     @classmethod
-    def start(cls, *, aura_bin: str | None = None, timeout_s: float = 20.0) -> SoftServe:
+    def start(cls, *, aura_bin: str | None = None, timeout_s: float = 12.0) -> SoftServe:
         bin_path = resolve_aura_bin(aura_bin)
         self = cls(aura_bin=bin_path)
         if not Path(bin_path).is_file():
-            self.last_error = "aura_bin_missing"
+            self.last_error = f"aura_bin_missing:{bin_path}"
             return self
         socket_dir().mkdir(parents=True, exist_ok=True)
         try:
@@ -275,7 +275,7 @@ def live_tick_serve(serve: SoftServe, *, timeout_s: float = 60.0) -> dict[str, A
     }
 
 
-def live_tick_oneshot(*, timeout_s: float = 90.0, aura_bin: str | None = None) -> dict[str, Any]:
+def live_tick_oneshot(*, timeout_s: float = 20.0, aura_bin: str | None = None) -> dict[str, Any]:
     """Oneshot Soft live boot+tick (slower; serve preferred)."""
     bin_path = resolve_aura_bin(aura_bin)
     if not Path(bin_path).is_file():
@@ -325,23 +325,43 @@ def evolve_live(
     serve: SoftServe | None = None,
     aura_bin: str | None = None,
 ) -> dict[str, Any]:
-    """Preferred Soft path: live mutate tick. Falls back to legacy evolve."""
+    """Preferred Soft path: live mutate tick. Falls back to legacy evolve.
+
+    When Soft serve is down / bin missing, return immediately — do NOT thrash
+    oneshot (90s) every tick; that left the TUI stuck on soft_down+probing.
+    """
     write_observe(signals)
     if serve is not None and serve.alive:
-        got = live_tick_serve(serve)
+        got = live_tick_serve(serve, timeout_s=25.0)
         if got.get("ok"):
             return got
-        # serve live failed → oneshot live once
-        one = live_tick_oneshot(aura_bin=aura_bin or serve.aura_bin)
-        if one.get("ok"):
-            one["via"] = f"serve_live_fail→{one.get('via')}"
-            return one
-    else:
-        one = live_tick_oneshot(aura_bin=aura_bin)
-        if one.get("ok"):
-            return one
-    # last resort: legacy score-only evolve (still Soft .aura, not Python brain)
-    return evolve_with_soft(signals, serve=serve, aura_bin=aura_bin)
+        # One short oneshot fallback only if bin still present
+        bin_path = aura_bin or serve.aura_bin
+        if Path(resolve_aura_bin(bin_path)).is_file():
+            one = live_tick_oneshot(timeout_s=20.0, aura_bin=bin_path)
+            if one.get("ok"):
+                one["via"] = f"serve_live_fail→{one.get('via')}"
+                return one
+        return {
+            "ok": False,
+            "via": "serve",
+            "reason": got.get("reason") or "serve_live_fail",
+            "scene": read_scene(),
+        }
+
+    bin_path = resolve_aura_bin(aura_bin)
+    if not Path(bin_path).is_file():
+        return {
+            "ok": False,
+            "via": "none",
+            "reason": "aura_bin_missing",
+            "scene": None,
+        }
+    # No persistent serve: one short oneshot, then legacy — never 90s hang loop
+    one = live_tick_oneshot(timeout_s=20.0, aura_bin=bin_path)
+    if one.get("ok"):
+        return one
+    return evolve_with_soft(signals, serve=None, aura_bin=bin_path)
 
 
 def evolve_oneshot(*, timeout_s: float = 40.0, aura_bin: str | None = None) -> dict[str, Any]:

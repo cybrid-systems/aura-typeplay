@@ -7,6 +7,8 @@ Python is thin: glyphs, emoji reactions, color bursts, bilingual micro-feedback.
 from __future__ import annotations
 
 import os
+from pathlib import Path
+import threading
 import time
 
 from textual import events
@@ -366,21 +368,35 @@ class TypeplayApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        # Do not block the TUI on SoftServe.start (can take many seconds).
         if self.mode in ("soft", "minimax"):
-            self._soft = soft_bridge.SoftServe.start()
-            if self._soft and not self._soft.alive:
-                self.scene_source = f"offline(soft_down:{self._soft.last_error})"
+            bin_path = soft_bridge.resolve_aura_bin()
+            if not Path(bin_path).is_file():
+                self.scene_source = f"offline(soft_down:aura_bin_missing:{bin_path})"
+            else:
+                self.scene_source = "soft:booting…"
+                threading.Thread(target=self._boot_soft, name="soft-boot", daemon=True).start()
         interval = float(os.environ.get("TYPEPLAY_EVOLVE_INTERVAL", "5"))
         self._worker = EvolveWorker(
             mode=self.mode,
             interval_s=max(3.0, interval),
-            soft=self._soft if self._soft and self._soft.alive else None,
+            soft=None,
             signals_fn=self._signals,
         )
         self._worker.start()
         self.set_interval(0.45, self._poll_evolve)
         self._refresh_all()
         soft_bridge.write_observe(self._signals())
+
+    def _boot_soft(self) -> None:
+        serve = soft_bridge.SoftServe.start(timeout_s=12.0)
+        self._soft = serve
+        if serve.alive:
+            if self._worker:
+                self._worker.soft = serve
+            self.scene_source = "soft:live"
+        else:
+            self.scene_source = f"offline(soft_down:{serve.last_error or 'down'})"
 
     def on_unmount(self) -> None:
         if self._worker:

@@ -478,7 +478,7 @@ def propose_copy(
     scene: Scene,
     signals: dict,
     *,
-    timeout: float = 30.0,
+    timeout: float = 12.0,
 ) -> dict[str, Any] | None:
     """Ask MiniMax for title/blurb/art for *this* Soft scene."""
     data, err = _chat_raw(
@@ -626,7 +626,7 @@ def propose_copy_multi(
     signals: dict,
     *,
     n: int = 3,
-    timeout: float = 40.0,
+    timeout: float = 12.0,
 ) -> tuple[list[dict[str, Any]], str]:
     """Return (candidates, error_reason). error empty on success with ≥1 cand."""
     data, err = _chat_raw(
@@ -653,7 +653,7 @@ def propose_copy_multi(
     if out:
         return out, ""
     # Fallback: single-object propose
-    one = propose_copy(scene, signals, timeout=min(30.0, timeout))
+    one = propose_copy(scene, signals, timeout=min(10.0, timeout))
     if one:
         return [one], ""
     return [], "no_candidates"
